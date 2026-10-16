@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>STUDIO CHRONO — Acoustic Timer</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;500;700&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -36,12 +37,12 @@
             font-family: 'JetBrains Mono', monospace; font-size: 28px; font-weight: 700;
             letter-spacing: 2px; margin: 0 0 6px 0; color: #f4f4f5;
         }
-        .app-sub { font-size: 13px; color: #71717a; margin: 0 0 32px 0; }
+        .app-sub { font-size: 13px; color: #71717a; margin: 0 0 28px 0; }
 
         .lobby-card {
-            width: 100%; max-width: 340px; background: rgba(24, 24, 27, 0.7);
-            border: 1px solid #27272a; border-radius: 20px; padding: 24px;
-            display: flex; flex-direction: column; gap: 14px;
+            width: 100%; max-width: 340px; background: rgba(24, 24, 27, 0.75);
+            border: 1px solid #27272a; border-radius: 20px; padding: 22px;
+            display: flex; flex-direction: column; gap: 12px;
             backdrop-filter: blur(12px);
         }
         .input-group label {
@@ -57,16 +58,21 @@
         .input-group input:focus { border-color: #52525b; }
 
         .btn-primary {
-            padding: 16px; border-radius: 12px; border: none;
-            background: #f4f4f5; color: #09090b; font-weight: 600; font-size: 14px;
+            padding: 15px; border-radius: 12px; border: none;
+            background: #f4f4f5; color: #09090b; font-weight: 600; font-size: 13px;
             cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
         }
         .btn-secondary {
-            padding: 15px; border-radius: 12px; border: 1px solid #27272a;
-            background: #18181b; color: #d4d4d8; font-weight: 500; font-size: 14px;
+            padding: 14px; border-radius: 12px; border: 1px solid #27272a;
+            background: #18181b; color: #d4d4d8; font-weight: 500; font-size: 13px;
             cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
         }
-        .btn-primary:active, .btn-secondary:active { transform: scale(0.98); }
+        .btn-aux {
+            padding: 12px; border-radius: 12px; border: 1px dashed #3f3f46;
+            background: rgba(24, 24, 27, 0.4); color: #a1a1aa; font-weight: 500; font-size: 12px;
+            cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+        }
+        .btn-primary:active, .btn-secondary:active, .btn-aux:active { transform: scale(0.98); }
 
         #lobbyStatus {
             font-family: 'JetBrains Mono', monospace; font-size: 11px;
@@ -78,9 +84,9 @@
            ========================================= */
         #mainScreen { position: absolute; inset: 0; display: none; background: #000; }
 
-        /* 상단 미니 상태바 (매우 은밀하고 전문적인 디자인) */
+        /* 상단 미니 상태바 */
         #topBar {
-            position: absolute; top: max(12px, env(safe-area-inset-top)); left: 16px; right: 16px;
+            position: absolute; top: max(12px, env(safe-area-inset-top)); left: 14px; right: 14px;
             display: flex; align-items: center; justify-content: space-between;
             z-index: 40; pointer-events: none;
         }
@@ -97,19 +103,42 @@
         .sync-dot.online { background: #10b981; box-shadow: 0 0 8px #10b981; }
         .sync-dot.connecting { background: #f59e0b; }
 
-        .mode-switcher {
-            pointer-events: auto; display: flex; gap: 6px;
-        }
+        .mode-switcher { pointer-events: auto; display: flex; gap: 6px; }
         .mini-btn {
             background: rgba(24, 24, 27, 0.85); border: 1px solid rgba(255,255,255,0.1);
             color: #d4d4d8; padding: 6px 10px; border-radius: 10px; font-size: 11px;
             font-family: 'JetBrains Mono', monospace; cursor: pointer;
             display: flex; align-items: center; gap: 4px;
         }
-        .mini-btn.active { background: #27272a; border-color: #52525b; color: #fff; }
+        .mini-btn.active { background: #27272a; border-color: #10b981; color: #fff; }
 
         /* =========================================
-           3. 지휘자용 스텔스 타이머 뷰 (STEALTH TIMER)
+           3. 모니터 전용 멀티캠 & 360 채널 선택 바 (상단 중앙)
+           ========================================= */
+        #channelBar {
+            position: absolute; top: max(54px, calc(env(safe-area-inset-top) + 44px));
+            left: 50%; transform: translateX(-50%);
+            display: none; align-items: center; gap: 6px;
+            background: rgba(15, 15, 20, 0.88); border: 1px solid rgba(255,255,255,0.12);
+            padding: 5px 8px; border-radius: 16px; z-index: 42;
+            backdrop-filter: blur(12px); white-space: nowrap; max-width: 95vw; overflow-x: auto;
+        }
+        .ch-btn {
+            background: transparent; border: 1px solid transparent; color: #a1a1aa;
+            padding: 6px 10px; border-radius: 10px; font-size: 11px;
+            font-family: 'JetBrains Mono', monospace; cursor: pointer;
+            display: flex; align-items: center; gap: 4px;
+        }
+        .ch-btn.active {
+            background: rgba(16, 185, 129, 0.16); border-color: rgba(16, 185, 129, 0.5); color: #34d399; font-weight: 600;
+        }
+        .ch-badge {
+            width: 6px; height: 6px; border-radius: 50%; background: #10b981; display: none;
+        }
+        .ch-badge.live { display: inline-block; }
+
+        /* =========================================
+           4. 지휘자용 스텔스 타이머 뷰 (STEALTH TIMER)
            ========================================= */
         #stealthDeck {
             position: absolute; inset: 0; display: none;
@@ -130,65 +159,84 @@
             margin: 10px 0; cursor: pointer;
         }
         .timer-controls {
-            display: flex; justify-content: center; gap: 12px; margin-top: 16px;
+            display: flex; justify-content: center; gap: 10px; margin-top: 16px; flex-wrap: wrap;
         }
         .timer-btn {
             background: #121216; border: 1px solid #27272a; color: #71717a;
-            padding: 8px 16px; border-radius: 8px; font-family: 'JetBrains Mono', monospace;
-            font-size: 12px; cursor: pointer;
+            padding: 8px 14px; border-radius: 8px; font-family: 'JetBrains Mono', monospace;
+            font-size: 11px; cursor: pointer;
         }
 
-        /* 무음 메모 (악보 코멘트처럼 자연스럽게 표시) */
         #stealthNoteBar {
             margin-top: 28px; min-height: 36px; width: 100%; max-width: 380px;
             border-top: 1px solid #18181b; padding-top: 12px;
             font-family: 'JetBrains Mono', monospace; font-size: 13px;
-            color: #a1a1aa; text-align: center; transition: opacity 0.3s;
+            color: #a1a1aa; text-align: center;
         }
         #stealthNoteText { color: #e4e4e7; }
-
-        /* 스텔스 모드 내 초소형 PIP (옵션으로 켜고 끔) */
         .stealth-pip-hint {
-            font-size: 11px; color: #3f3f46; margin-top: 20px;
+            font-size: 11px; color: #3f3f46; margin-top: 18px;
             font-family: 'JetBrains Mono', monospace;
         }
 
         /* =========================================
-           4. 비디오 레이아웃 (DUAL VIEW / MONITOR VIEW)
+           5. 비디오 & 360도 VR 스테이지
            ========================================= */
         #videoStage {
             position: absolute; inset: 0; display: flex;
             align-items: center; justify-content: center; overflow: hidden; z-index: 10;
+            touch-action: none;
         }
-        /* 메인 원격 비디오 */
         #remoteVideo {
             width: 100%; height: 100%; object-fit: contain;
-            transition: transform 0.25s ease;
+            transition: transform 0.1s ease-out;
         }
 
-        /* 내 카메라 / 보조 PIP 박스 */
-        #pipBox {
-            position: absolute; bottom: max(95px, calc(env(safe-area-inset-bottom) + 85px)); right: 16px;
-            width: 105px; height: 140px; border-radius: 16px; overflow: hidden;
-            background: #121216; border: 1px solid rgba(255,255,255,0.18);
-            box-shadow: 0 12px 30px rgba(0,0,0,0.8); z-index: 30;
-            transition: all 0.25s ease; cursor: pointer;
+        /* WebGL 360 Sphere 캔버스 컨테이너 */
+        #vr360Container {
+            position: absolute; inset: 0; display: none; z-index: 14;
+            background: #000; touch-action: none; cursor: grab;
         }
-        #pipBox.stealth-mini {
-            width: 68px; height: 90px; opacity: 0.35; border-color: rgba(255,255,255,0.08);
+        #vr360Container:active { cursor: grabbing; }
+        .vr-hint {
+            position: absolute; bottom: 95px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.15);
+            color: #d4d4d8; padding: 6px 14px; border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px; pointer-events: none;
         }
-        #pipBox.hidden-pip { opacity: 0; pointer-events: none; transform: scale(0.8); }
-        #localVideo {
-            width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);
+
+        /* 외부 X5 360 라이브 (YouTube 360 등) 임베드 컨테이너 */
+        #ext360Wrapper {
+            position: absolute; inset: 0; display: none; z-index: 15; background: #000;
         }
+        #ext360Iframe {
+            width: 100%; height: 100%; border: none;
+        }
+
+        /* PIP 박스들 (내 카메라 + 세컨드 카메라 동시 PIP 지원) */
+        #pipContainer {
+            position: absolute; bottom: max(92px, calc(env(safe-area-inset-bottom) + 82px)); right: 14px;
+            display: flex; flex-direction: column; gap: 10px; z-index: 30;
+        }
+        .pip-card {
+            position: relative; width: 100px; height: 132px; border-radius: 14px; overflow: hidden;
+            background: #121216; border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.8); cursor: pointer;
+            transition: all 0.25s ease;
+        }
+        .pip-card.stealth-mini {
+            width: 66px; height: 88px; opacity: 0.35; border-color: rgba(255,255,255,0.08);
+        }
+        .pip-card.hidden-pip { display: none; }
+        .pip-card video { width: 100%; height: 100%; object-fit: cover; }
         .pip-label {
-            position: absolute; bottom: 6px; left: 8px;
+            position: absolute; bottom: 5px; left: 6px;
             font-family: 'JetBrains Mono', monospace; font-size: 9px;
-            color: rgba(255,255,255,0.7); background: rgba(0,0,0,0.6);
+            color: rgba(255,255,255,0.85); background: rgba(0,0,0,0.65);
             padding: 2px 5px; border-radius: 4px;
         }
 
-        /* 스텔스 모드에서 상대방 화면 살짝 보기 (Peek 비디오 오버레이) */
+        /* 스텔스 홀드 Peek 오버레이 */
         #peekOverlay {
             position: fixed; inset: 0; background: rgba(0,0,0,0.92);
             z-index: 60; display: none; align-items: center; justify-content: center;
@@ -203,66 +251,62 @@
             font-size: 12px; color: #a1a1aa;
         }
 
-        /* 완전 블랙아웃(암전) 오버레이 */
+        /* 블랙아웃 오버레이 */
         #blackoutOverlay {
             position: fixed; inset: 0; background: #000000;
             z-index: 90; display: none; align-items: center; justify-content: center;
         }
-        .blackout-dot {
-            width: 4px; height: 4px; border-radius: 50%; background: #18181b;
-        }
+        .blackout-dot { width: 4px; height: 4px; border-radius: 50%; background: #18181b; }
 
         /* =========================================
-           5. 하단 컨트롤 독 (오디오 뮤트 / 카메라 전환 / 줌 / 메모)
+           6. 모니터 우측 툴바 & 하단 컨트롤 독
            ========================================= */
+        #viewerTools {
+            position: absolute; top: max(105px, calc(env(safe-area-inset-top) + 95px)); right: 14px;
+            display: none; flex-direction: column; gap: 8px; z-index: 40;
+        }
+        .tool-circle {
+            width: 38px; height: 38px; border-radius: 50%;
+            background: rgba(24, 24, 27, 0.85); border: 1px solid rgba(255,255,255,0.15);
+            color: #fff; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; backdrop-filter: blur(10px); font-family: 'JetBrains Mono', monospace; font-size: 10px;
+        }
+        .tool-circle.active { border-color: #10b981; color: #34d399; background: rgba(16, 185, 129, 0.15); }
+        .tool-circle:active { transform: scale(0.92); }
+
         #bottomDock {
-            position: absolute; bottom: max(20px, env(safe-area-inset-bottom));
+            position: absolute; bottom: max(18px, env(safe-area-inset-bottom));
             left: 50%; transform: translateX(-50%);
-            display: flex; align-items: center; gap: 8px;
-            background: rgba(18, 18, 22, 0.9); border: 1px solid rgba(255,255,255,0.1);
-            padding: 8px 12px; border-radius: 24px; backdrop-filter: blur(16px);
+            display: flex; align-items: center; gap: 6px;
+            background: rgba(18, 18, 22, 0.92); border: 1px solid rgba(255,255,255,0.1);
+            padding: 8px 10px; border-radius: 22px; backdrop-filter: blur(16px);
             z-index: 45; max-width: 96vw; overflow-x: auto;
         }
         .dock-btn {
             background: #1f1f26; border: 1px solid #2e2e38; color: #e4e4e7;
-            padding: 10px 12px; border-radius: 16px; font-size: 11px;
+            padding: 9px 11px; border-radius: 14px; font-size: 11px;
             font-family: 'JetBrains Mono', monospace; cursor: pointer;
-            display: flex; align-items: center; gap: 6px; white-space: nowrap;
-            transition: all 0.15s;
+            display: flex; align-items: center; gap: 5px; white-space: nowrap;
         }
         .dock-btn:active { transform: scale(0.95); }
-        /* 위험/주의(스피커 켜짐 등) 및 안전(뮤트됨) 색상 구분 */
         .dock-btn.safe-muted { background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
         .dock-btn.live-warn { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.5); color: #f87171; }
         .dock-btn.mic-off { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4); color: #fbbf24; }
 
-        /* 모니터 전용 뷰 컨트롤 바 (회전/줌/확대) */
-        #viewerTools {
-            position: absolute; top: max(56px, calc(env(safe-area-inset-top) + 46px)); right: 16px;
-            display: none; flex-direction: column; gap: 8px; z-index: 40;
-        }
-        .tool-circle {
-            width: 40px; height: 40px; border-radius: 50%;
-            background: rgba(24, 24, 27, 0.85); border: 1px solid rgba(255,255,255,0.15);
-            color: #fff; display: flex; align-items: center; justify-content: center;
-            cursor: pointer; backdrop-filter: blur(10px); font-family: 'JetBrains Mono', monospace; font-size: 11px;
-        }
-        .tool-circle:active { transform: scale(0.92); }
-
-        /* 카메라 선택 모달 (전면 / 후면 / Insta360 X5 등) */
-        #camModal {
-            position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+        /* 모달 공통 */
+        .modal-backdrop {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.82);
             z-index: 80; display: none; align-items: center; justify-content: center; padding: 20px;
         }
         .modal-box {
-            width: 100%; max-width: 340px; background: #141418;
+            width: 100%; max-width: 350px; background: #141418;
             border: 1px solid #27272a; border-radius: 20px; padding: 20px;
         }
         .modal-title {
-            font-family: 'JetBrains Mono', monospace; font-size: 13px;
+            font-family: 'JetBrains Mono', monospace; font-size: 12px;
             color: #a1a1aa; margin-bottom: 14px; display: flex; justify-content: space-between;
         }
-        .cam-list { display: flex; flex-direction: column; gap: 8px; }
+        .cam-list { display: flex; flex-direction: column; gap: 8px; max-height: 60dvh; overflow-y: auto; }
         .cam-item {
             padding: 12px 14px; border-radius: 12px; background: #1f1f26;
             border: 1px solid #2e2e38; color: #fff; font-size: 13px;
@@ -270,9 +314,9 @@
         }
         .cam-item.selected { border-color: #10b981; color: #34d399; }
 
-        /* 메모/메시지 입력 팝업 */
+        /* 메모 입력 팝업 */
         #notePopup {
-            position: absolute; bottom: max(82px, calc(env(safe-area-inset-bottom) + 72px));
+            position: absolute; bottom: max(78px, calc(env(safe-area-inset-bottom) + 68px));
             left: 50%; transform: translateX(-50%);
             width: min(92vw, 380px); background: rgba(20, 20, 25, 0.95);
             border: 1px solid #3f3f46; border-radius: 18px; padding: 8px 10px;
@@ -288,23 +332,22 @@
             border-radius: 12px; padding: 8px 12px; font-weight: 600; font-size: 12px; cursor: pointer;
         }
 
-        /* 모니터 화면에 표시되는 자막형 메시지 */
         #floatingMsg {
-            position: absolute; top: max(60px, calc(env(safe-area-inset-top) + 50px));
+            position: absolute; top: max(98px, calc(env(safe-area-inset-top) + 88px));
             left: 50%; transform: translateX(-50%);
-            background: rgba(0,0,0,0.75); border: 1px solid rgba(255,255,255,0.15);
-            padding: 8px 16px; border-radius: 20px; font-size: 14px; color: #fff;
-            z-index: 45; display: none; pointer-events: none; white-space: nowrap;
+            background: rgba(0,0,0,0.8); border: 1px solid rgba(255,255,255,0.18);
+            padding: 8px 16px; border-radius: 20px; font-size: 13px; color: #fff;
+            z-index: 48; display: none; pointer-events: none; white-space: nowrap;
         }
     </style>
 </head>
 <body>
 
-    <!-- 1. 로비 화면 (완벽한 리허설 유틸리티 위장) -->
+    <!-- 1. 로비 화면 -->
     <div id="lobbyScreen">
-        <div class="app-badge">ACOUSTIC SYNC v2.4</div>
+        <div class="app-badge">ACOUSTIC MULTI-SYNC v3.0</div>
         <h1 class="app-title">STUDIO CHRONO</h1>
-        <p class="app-sub">Precision Rehearsal Timer & Monitor</p>
+        <p class="app-sub">Precision Rehearsal Timer & Multi-Angle Monitor</p>
 
         <div class="lobby-card">
             <div class="input-group">
@@ -312,16 +355,22 @@
                 <input type="text" id="sessionInput" value="rehearsal-01" autocomplete="off">
             </div>
 
-            <!-- 지휘자(나) 입장 버튼 -->
+            <!-- 1) 지휘자(나 - 아이폰 보면대) 입장 -->
             <button class="btn-primary" onclick="startSession('master')">
                 <span class="material-symbols-rounded">timer</span>
-                MASTER (TIMER & SYNC)
+                MASTER (CONDUCTOR CAM)
             </button>
 
-            <!-- 모니터(상대방) 입장 버튼 -->
+            <!-- 2) 모니터(뷰어) 입장 -->
             <button class="btn-secondary" onclick="startSession('monitor')">
                 <span class="material-symbols-rounded">visibility</span>
-                MONITOR (VIEWER)
+                MONITOR (MULTI-VIEWER)
+            </button>
+
+            <!-- 3) 세컨드 카메라(합창단 전체 샷 / X5 보조 기기) 입장 -->
+            <button class="btn-aux" onclick="startSession('aux')">
+                <span class="material-symbols-rounded">videocam</span>
+                AUX SENSOR (CHOIR / X5 CAM 2)
             </button>
 
             <div id="lobbyStatus">READY FOR SESSION</div>
@@ -350,16 +399,38 @@
             </div>
         </div>
 
-        <!-- 3. 지휘자용 스텔스 타이머 덱 -->
+        <!-- 3. 뷰어(MONITOR) 전용: 원터치 카메라 & 360 전환 탭 -->
+        <div id="channelBar">
+            <button id="chMasterFront" class="ch-btn active" onclick="selectViewerChannel('master-front')">
+                <span class="ch-badge live" id="badgeMaster"></span>
+                <span>CAM 1 (지휘자)</span>
+            </button>
+            <button id="chMasterRear" class="ch-btn" onclick="selectViewerChannel('master-rear')">
+                <span>CAM 1-B (후면/합창단)</span>
+            </button>
+            <button id="chAuxCam" class="ch-btn" onclick="selectViewerChannel('aux')">
+                <span class="ch-badge" id="badgeAux"></span>
+                <span>CAM 2 (X5/전체샷)</span>
+            </button>
+            <button id="ch360Sphere" class="ch-btn" onclick="selectViewerChannel('360-sphere')">
+                <span>360° VR 드래그</span>
+            </button>
+            <button id="chExt360" class="ch-btn" onclick="selectViewerChannel('ext-360')" style="display:none;">
+                <span class="ch-badge live"></span>
+                <span>X5 360 LIVE</span>
+            </button>
+        </div>
+
+        <!-- 4. 지휘자용 스텔스 타이머 덱 -->
         <div id="stealthDeck">
             <div class="chrono-box">
                 <div id="realClock" class="real-clock">00:00:00</div>
-                <!-- 숫자를 누르고 있으면(Touch & Hold) 상대방 얼굴이 팝업으로 보임 -->
                 <div id="elapsedTimer" class="elapsed-timer">00:00</div>
                 <div class="timer-controls">
                     <button class="timer-btn" onclick="toggleChrono()" id="chronoToggleBtn">PAUSE</button>
                     <button class="timer-btn" onclick="resetChrono()">RESET</button>
                     <button class="timer-btn" onclick="toggleStealthPip()" id="pipToggleBtn">PIP: OFF</button>
+                    <button class="timer-btn" onclick="open360LinkModal()">X5 LINK</button>
                 </div>
                 <div id="stealthNoteBar">
                     MEMO: <span id="stealthNoteText">—</span>
@@ -368,15 +439,31 @@
             </div>
         </div>
 
-        <!-- 4. 비디오 스테이지 -->
+        <!-- 5. 메인 비디오 스테이지 (터치 드래그 패닝 & 핀치 줌 지원) -->
         <div id="videoStage">
             <video id="remoteVideo" autoplay playsinline></video>
         </div>
 
-        <!-- 내 카메라 (또는 스텔스 모드 시 초소형 PIP) -->
-        <div id="pipBox" onclick="swapMainAndPip()">
-            <video id="localVideo" autoplay playsinline muted></video>
-            <div class="pip-label" id="pipLabel">CAM</div>
+        <!-- WebGL 360도 인터랙티브 구체 뷰어 (화면을 상하좌우 드래그해 360도 회전) -->
+        <div id="vr360Container">
+            <div class="vr-hint">화면을 손가락으로 드래그하여 360° 회전 / 두 손가락 줌</div>
+        </div>
+
+        <!-- 외부 X5 360도 라이브 플레이어 (유튜브 360 등) -->
+        <div id="ext360Wrapper">
+            <iframe id="ext360Iframe" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; vr" allowfullscreen></iframe>
+        </div>
+
+        <!-- PIP 컨테이너 (내 카메라 + 보조 카메라 동시 표시 및 클릭 시 메인 화면 전환) -->
+        <div id="pipContainer">
+            <div id="auxPipBox" class="pip-card hidden-pip" onclick="swapAuxToMain()">
+                <video id="auxPipVideo" autoplay playsinline muted></video>
+                <div class="pip-label" id="auxPipLabel">CAM 2</div>
+            </div>
+            <div id="pipBox" class="pip-card" onclick="swapMainAndPip()">
+                <video id="localVideo" autoplay playsinline muted></video>
+                <div class="pip-label" id="pipLabel">CAM</div>
+            </div>
         </div>
 
         <!-- 타이머 홀드 시 순간적으로 보여주는 Peek 오버레이 -->
@@ -385,28 +472,31 @@
             <div class="peek-caption">RELEASE TO RETURN TO TIMER</div>
         </div>
 
-        <!-- 완전 암전(Blackout) 오버레이 (더블클릭/더블탭 시 해제) -->
+        <!-- 완전 암전(Blackout) 오버레이 -->
         <div id="blackoutOverlay" onclick="handleBlackoutTap()">
             <div class="blackout-dot"></div>
         </div>
 
-        <!-- 모니터용 화면 회전 / 줌 / 좌우반전 툴 -->
+        <!-- 모니터용 우측 컨트롤 툴바 -->
         <div id="viewerTools">
+            <button class="tool-circle" id="btnPanMode" onclick="toggleTouchPanMode()" title="터치 드래그 이동 모드">
+                <span class="material-symbols-rounded">pan_tool</span>
+            </button>
             <button class="tool-circle" onclick="rotateRemoteVideo()" title="90도 회전">
                 <span class="material-symbols-rounded">rotate_right</span>
             </button>
             <button class="tool-circle" onclick="zoomRemoteVideo()" id="zoomBtn" title="확대/축소">
                 1x
             </button>
+            <button class="tool-circle" onclick="resetPanAndZoom()" title="화면 중앙 초기화">
+                <span class="material-symbols-rounded">center_focus_strong</span>
+            </button>
             <button class="tool-circle" onclick="mirrorRemoteVideo()" title="좌우반전">
                 <span class="material-symbols-rounded">flip</span>
             </button>
-            <button class="tool-circle" onclick="requestRemoteCamSwitch()" title="상대 카메라 전환 요청">
-                <span class="material-symbols-rounded">cameraswitch</span>
-            </button>
         </div>
 
-        <!-- 모니터용 플로팅 알림 -->
+        <!-- 플로팅 알림 -->
         <div id="floatingMsg"></div>
 
         <!-- 무음 메모 입력창 -->
@@ -415,48 +505,67 @@
             <button class="note-send-btn" onclick="sendNote()">SEND</button>
         </div>
 
-        <!-- 5. 하단 컨트롤 독 -->
+        <!-- 6. 하단 컨트롤 독 -->
         <div id="bottomDock">
-            <!-- 상대방 소리 듣기/끄기 (지휘자는 기본 OFF로 절대 안전 보장) -->
             <button id="btnSpeaker" class="dock-btn safe-muted" onclick="toggleRemoteAudio()">
                 <span class="material-symbols-rounded" id="iconSpeaker">volume_off</span>
                 <span id="labelSpeaker">SPK: MUTE</span>
             </button>
 
-            <!-- 내 마이크 켜기/끄기 -->
             <button id="btnMic" class="dock-btn" onclick="toggleLocalMic()">
                 <span class="material-symbols-rounded" id="iconMic">mic</span>
                 <span id="labelMic">MIC: ON</span>
             </button>
 
-            <!-- 카메라 전환 (전면 / 후면 / Insta360 X5) -->
             <button id="btnCam" class="dock-btn" onclick="openCamModal()">
                 <span class="material-symbols-rounded">videocam</span>
                 <span id="labelCam">SENSOR</span>
             </button>
 
-            <!-- 합창 원음 모드 토글 -->
             <button id="btnMusicMode" class="dock-btn" onclick="toggleMusicAudioMode()">
                 <span class="material-symbols-rounded">graphic_eq</span>
                 <span id="labelMusicMode">RAW: ON</span>
             </button>
 
-            <!-- 무음 메모 열기 -->
+            <button class="dock-btn" onclick="open360LinkModal()">
+                <span class="material-symbols-rounded">360</span>
+                <span>X5 360</span>
+            </button>
+
             <button class="dock-btn" onclick="toggleNotePopup()">
                 <span class="material-symbols-rounded">edit_note</span>
                 <span>MEMO</span>
             </button>
         </div>
 
-        <!-- 카메라 센서 선택 모달 (아이폰 전면/후면 및 Insta360 X5 자동 감지) -->
-        <div id="camModal" onclick="if(event.target===this) closeCamModal()">
+        <!-- 카메라 센서 선택 모달 -->
+        <div id="camModal" class="modal-backdrop" onclick="if(event.target===this) closeCamModal()">
             <div class="modal-box">
                 <div class="modal-title">
                     <span>SELECT VIDEO SENSOR</span>
                     <span style="cursor:pointer;" onclick="closeCamModal()">✕</span>
                 </div>
-                <div class="cam-list" id="camListContainer">
-                    <!-- JS에서 동적 생성 -->
+                <div class="cam-list" id="camListContainer"></div>
+            </div>
+        </div>
+
+        <!-- X5 360 라이브 스트림(YouTube 360 일부공개 / 커스텀 URL) 연동 모달 -->
+        <div id="link360Modal" class="modal-backdrop" onclick="if(event.target===this) close360LinkModal()">
+            <div class="modal-box">
+                <div class="modal-title">
+                    <span>INSTA360 X5 — 360° LIVE STREAM</span>
+                    <span style="cursor:pointer;" onclick="close360LinkModal()">✕</span>
+                </div>
+                <p style="font-size:12px; color:#a1a1aa; line-height:1.5; margin-top:0;">
+                    1) X5를 별도 기기(AUX SENSOR)로 접속하거나,<br>
+                    2) Insta360 앱에서 <b>360° Live (YouTube 일부공개 등)</b> 시작 후 공유 링크를 아래에 붙여넣으면 뷰어 화면에 360° 회전 채널이 생성됩니다.
+                </p>
+                <div class="input-group" style="margin-bottom:12px;">
+                    <input type="text" id="ext360Input" placeholder="https://youtu.be/... 또는 스트림 주소">
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn-primary" style="flex:1;" onclick="applyExt360Url()">SYNC 360° CHANNEL</button>
+                    <button class="btn-secondary" onclick="clearExt360Url()">CLEAR</button>
                 </div>
             </div>
         </div>

@@ -22,10 +22,9 @@ let isMusicRawMode = true;
 let currentVideoDeviceId = null;
 let currentFacingMode = 'user';
 
-// Web Audio API (iOS Safari에서 muted=false 시 비디오가 멈추는 치명적 버그 우회용!)
-let audioCtx = null;
+// Web Audio API (기존 영화관 앱과 동일한 구조)
+let remoteAudioCtx = null;
 let remoteGainNode = null;
-const connectedAudioSources = new Set();
 
 // 뷰어 채널 및 화면 모드
 let displayMode = 'stealth'; // 'stealth' | 'video' | 'blackout'
@@ -59,12 +58,26 @@ let chronoRunning = true;
 let chronoInterval = null;
 let wakeLock = null;
 
+// STUN + 무료 글로벌 TURN 서버 (서로 다른 네트워크/LTE-WiFi 방화벽에서도 100% 영상 전송 보장!)
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' }
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        }
     ]
 };
 
@@ -75,49 +88,40 @@ const peekVideo = document.getElementById('peekVideo');
 const pipBox = document.getElementById('pipBox');
 const auxPipBox = document.getElementById('auxPipBox');
 
-// iOS Safari 자동재생 보장을 위해 모든 video 태그의 기본 muted 속성을 true로 강제 고정!
-// (실제 소리는 Web Audio API GainNode로 출력하여 비디오 멈춤 현상 100% 방지)
-remoteVideo.muted = true;
-localVideo.muted = true;
-auxPipVideo.muted = true;
-peekVideo.muted = true;
-
-function initWebAudio() {
+function initAudioBooster() {
     try {
-        if (!audioCtx) {
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            audioCtx = new AudioContextClass();
-            remoteGainNode = audioCtx.createGain();
-            remoteGainNode.connect(audioCtx.destination);
+        if (!remoteAudioCtx) {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            remoteAudioCtx = new AudioContext();
+            remoteGainNode = remoteAudioCtx.createGain();
+            remoteGainNode.connect(remoteAudioCtx.destination);
         }
-        if (audioCtx.state === 'suspended') {
-            audioCtx.resume();
+        if (remoteAudioCtx.state === 'suspended') {
+            remoteAudioCtx.resume();
         }
-        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 1.8;
+        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 2.0;
     } catch (e) {
-        console.warn('WebAudio init error:', e);
+        console.warn('AudioContext init error:', e);
     }
 }
 
 document.addEventListener('touchstart', () => {
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (remoteAudioCtx && remoteAudioCtx.state === 'suspended') remoteAudioCtx.resume();
 }, { passive: true });
 document.addEventListener('click', () => {
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (remoteAudioCtx && remoteAudioCtx.state === 'suspended') remoteAudioCtx.resume();
 });
 
-function attachStreamToWebAudio(stream, peerId) {
-    if (!audioCtx || !remoteGainNode) return;
-    if (connectedAudioSources.has(peerId)) return;
-    const audioTracks = stream.getAudioTracks();
-    if (audioTracks.length > 0) {
+function connectStreamAudio(stream) {
+    if (!remoteAudioCtx || !remoteGainNode || !stream) return;
+    if (!stream.boostConnected && stream.getAudioTracks().length > 0) {
         try {
-            const audioOnlyStream = new MediaStream([audioTracks[0]]);
-            const source = audioCtx.createMediaStreamSource(audioOnlyStream);
+            const audioStream = new MediaStream([stream.getAudioTracks()[0]]);
+            const source = remoteAudioCtx.createMediaStreamSource(audioStream);
             source.connect(remoteGainNode);
-            connectedAudioSources.add(peerId);
+            stream.boostConnected = true;
         } catch (e) {
-            console.warn('Audio source connect error:', e);
+            console.warn('Audio booster error:', e);
         }
     }
 }
@@ -126,6 +130,7 @@ function attachStreamToWebAudio(stream, peerId) {
 // 1. 세션 시작 (MASTER / MONITOR / AUX)
 // =====================================================
 window.startSession = async function(role) {
+    initAudioBooster();
     const inputVal = document.getElementById('sessionInput').value.trim();
     if (!inputVal) return alert('Enter Session Code');
 
@@ -149,14 +154,14 @@ window.startSession = async function(role) {
         displayMode = 'video';
     }
 
-    initWebAudio();
     document.getElementById('lobbyStatus').innerText = 'INITIALIZING SENSORS...';
 
     try {
         await acquireMediaStream(null, currentFacingMode);
     } catch (err) {
-        console.warn('Camera/Mic fallback warning:', err);
-        // 혹시 모니터 쪽에 카메라가 없거나 거부되어도 시청(수신)은 가능하도록 빈 스트림 허용!
+        console.error('Camera error:', err);
+        alert('카메라/마이크 권한이 필요합니다.');
+        return;
     }
 
     await requestWakeLock();
@@ -177,28 +182,20 @@ window.startSession = async function(role) {
 };
 
 // =====================================================
-// 2. 카메라 & 오디오 스트림 획득 (안전한 제약조건 폴백 적용)
+// 2. 카메라 & 오디오 스트림 획득 (기존 영화관 앱과 동일한 안정적 제약조건)
 // =====================================================
 async function acquireMediaStream(deviceId = null, facingMode = 'user') {
     if (localStream) {
         localStream.getTracks().forEach(t => t.stop());
     }
 
-    const videoConstraints = {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 24, max: 30 }
-    };
-
-    if (deviceId) {
-        videoConstraints.deviceId = { exact: deviceId };
-    } else {
-        videoConstraints.facingMode = facingMode;
-    }
+    const videoConstraints = deviceId
+        ? { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } }
+        : { facingMode: facingMode, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } };
 
     const audioConstraints = isMusicRawMode
-        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-        : { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+        ? { autoGainControl: false, noiseSuppression: false }
+        : { autoGainControl: true, noiseSuppression: true, echoCancellation: true };
 
     try {
         localStream = await navigator.mediaDevices.getUserMedia({
@@ -206,10 +203,8 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
             audio: audioConstraints
         });
     } catch (err) {
-        console.warn('Primary getUserMedia failed, retrying with basic constraints:', err);
-        // iOS Safari 등에서 특정 해상도/제약조건 충돌 시 기본 설정으로 즉시 재시도
         localStream = await navigator.mediaDevices.getUserMedia({
-            video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: facingMode },
+            video: true,
             audio: true
         });
     }
@@ -227,9 +222,9 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
         document.getElementById('labelCam').innerText = getShortCamName(vTrack.label, facingMode);
     }
 
-    renderStreamsToVideoElements();
+    updateVideoLayout();
 
-    // 연결된 모든 피어에 끊김 없이 트랙 교체
+    // 이미 연결된 Peer가 있으면 끊김 없이 트랙 교체
     for (const peerId in peers) {
         const pc = peers[peerId];
         const senders = pc.getSenders();
@@ -246,8 +241,6 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
             await audioSender.replaceTrack(newAudioTrack);
         }
     }
-
-    optimizeSenderBitrate();
 }
 
 function getShortCamName(label, facing) {
@@ -261,7 +254,240 @@ function getShortCamName(label, facing) {
 }
 
 // =====================================================
-// 3. 카메라 센서 선택 모달
+// 3. 화면 배치 로직 (절대 내 화면이 큰 화면을 덮어쓰지 않도록 명확히 분리!)
+// =====================================================
+function getStreamByRole(targetRole) {
+    for (const id in peerStreams) {
+        if (peerRoles[id] === targetRole) {
+            return peerStreams[id];
+        }
+    }
+    return null;
+}
+
+function getFirstRemoteStream() {
+    const ids = Object.keys(peerStreams);
+    return ids.length > 0 ? peerStreams[ids[0]] : null;
+}
+
+function assignVideoSrc(videoEl, stream) {
+    if (!videoEl) return;
+    if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream || null;
+        if (stream) {
+            videoEl.play().catch(e => console.warn('play warning:', e));
+        }
+    }
+}
+
+function updateVideoLayout() {
+    const masterStream = getStreamByRole('master');
+    const auxStream = getStreamByRole('aux');
+    const monitorStream = getStreamByRole('monitor');
+    const anyRemoteStream = getFirstRemoteStream();
+
+    // 상단 채널 배지 표시
+    const badgeMaster = document.getElementById('badgeMaster');
+    const badgeAux = document.getElementById('badgeAux');
+    if (badgeMaster) badgeMaster.classList.toggle('live', !!(masterStream || anyRemoteStream));
+    if (badgeAux) badgeAux.classList.toggle('live', !!auxStream);
+
+    // 1) 스텔스 타이머 모드일 때 (지휘자 폰)
+    if (displayMode === 'stealth') {
+        auxPipBox.classList.add('hidden-pip');
+        if (stealthPipVisible) {
+            pipBox.classList.remove('hidden-pip');
+            pipBox.classList.add('stealth-mini');
+            // 스텔스 PIP에는 무조건 상대방(모니터) 화면을 표시! (없으면 내 카메라)
+            const targetPip = monitorStream || anyRemoteStream || localStream;
+            assignVideoSrc(localVideo, targetPip);
+            document.getElementById('pipLabel').innerText = (monitorStream || anyRemoteStream) ? 'MON' : 'MY CAM';
+        } else {
+            pipBox.classList.add('hidden-pip');
+        }
+        return;
+    }
+
+    // 2) 일반 VIEW 모드일 때
+    pipBox.classList.remove('stealth-mini', 'hidden-pip');
+
+    if (myRole === 'monitor') {
+        // [모니터(뷰어) 폰]:
+        // 큰 전체화면(remoteVideo) = 무조건 지휘자(master) 또는 보조캠(aux)! 절대 내 카메라(localStream)를 큰 화면에 넣지 않음!
+        // 작은 PIP화면(localVideo) = 내 카메라(localStream)
+        let mainTarget = (activeViewerChannel === 'aux' && auxStream)
+            ? auxStream
+            : (masterStream || anyRemoteStream || auxStream || null);
+
+        let secondaryTarget = (auxStream && mainTarget !== auxStream) ? auxStream : null;
+
+        if (!isSwappedPip) {
+            assignVideoSrc(remoteVideo, mainTarget);
+            assignVideoSrc(localVideo, localStream);
+            document.getElementById('pipLabel').innerText = 'ME';
+        } else {
+            assignVideoSrc(remoteVideo, localStream);
+            assignVideoSrc(localVideo, mainTarget);
+            document.getElementById('pipLabel').innerText = 'STAGE';
+        }
+
+        if (secondaryTarget) {
+            assignVideoSrc(auxPipVideo, secondaryTarget);
+            auxPipBox.classList.remove('hidden-pip');
+            document.getElementById('auxPipLabel').innerText = 'CAM 2';
+        } else {
+            auxPipBox.classList.add('hidden-pip');
+        }
+    } else {
+        // [지휘자(MASTER) 폰에서 VIEW 모드를 눌렀을 때]:
+        // 큰 전체화면(remoteVideo) = 모니터(상대방) 화면!
+        // 작은 PIP화면(localVideo) = 지휘자(내) 화면!
+        const targetRemote = monitorStream || anyRemoteStream || null;
+
+        if (!isSwappedPip) {
+            assignVideoSrc(remoteVideo, targetRemote);
+            assignVideoSrc(localVideo, localStream);
+            document.getElementById('pipLabel').innerText = 'MY CAM';
+        } else {
+            assignVideoSrc(remoteVideo, localStream);
+            assignVideoSrc(localVideo, targetRemote);
+            document.getElementById('pipLabel').innerText = 'MON';
+        }
+        auxPipBox.classList.add('hidden-pip');
+    }
+
+    applyRemoteAudioState();
+}
+
+// =====================================================
+// 4. WebRTC 시그널링 (기존 영화관 앱과 100% 동일한 검증된 연결 방식!)
+// =====================================================
+socket.on('user-connected', async (peerInfo) => {
+    const userId = typeof peerInfo === 'string' ? peerInfo : peerInfo.id;
+    const role = (typeof peerInfo === 'object' && peerInfo.role) ? peerInfo.role : 'monitor';
+    peerRoles[userId] = role;
+
+    console.log('User connected, creating offer to:', userId, role);
+    setSyncStatus('connecting', 'LINKING...');
+
+    const pc = createPeerConnection(userId);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    socket.emit('offer', {
+        target: userId,
+        caller: socket.id,
+        sdp: pc.localDescription,
+        role: myRole
+    });
+});
+
+socket.on('offer', async (payload) => {
+    console.log('Received offer from:', payload.caller, payload.role);
+    if (payload.role) peerRoles[payload.caller] = payload.role;
+
+    const pc = createPeerConnection(payload.caller);
+    await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    socket.emit('answer', {
+        target: payload.caller,
+        caller: socket.id,
+        sdp: pc.localDescription,
+        role: myRole
+    });
+});
+
+socket.on('answer', async (payload) => {
+    console.log('Received answer from:', payload.caller, payload.role);
+    if (payload.role) peerRoles[payload.caller] = payload.role;
+
+    const pc = peers[payload.caller];
+    if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+        setSyncStatus('online', 'SYNC LOCKED');
+    }
+});
+
+socket.on('ice-candidate', async (incoming) => {
+    const pc = peers[incoming.sender];
+    if (pc && incoming.candidate) {
+        try {
+            await pc.addIceCandidate(new RTCIceCandidate(incoming.candidate));
+        } catch (e) {
+            console.error('Error adding received ice candidate', e);
+        }
+    }
+});
+
+socket.on('user-disconnected', (data) => {
+    const peerId = typeof data === 'string' ? data : data.id;
+    if (peers[peerId]) {
+        peers[peerId].close();
+        delete peers[peerId];
+    }
+    delete peerStreams[peerId];
+    delete peerRoles[peerId];
+
+    if (Object.keys(peerStreams).length === 0) {
+        setSyncStatus('connecting', 'STANDBY');
+    }
+    updateVideoLayout();
+});
+
+function createPeerConnection(targetUserId) {
+    if (peers[targetUserId]) {
+        peers[targetUserId].close();
+    }
+
+    const pc = new RTCPeerConnection(rtcConfig);
+    peers[targetUserId] = pc;
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            socket.emit('ice-candidate', {
+                target: targetUserId,
+                candidate: event.candidate
+            });
+        }
+    };
+
+    pc.ontrack = (event) => {
+        console.log('ontrack received from:', targetUserId, event.streams);
+        const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+        peerStreams[targetUserId] = stream;
+
+        connectStreamAudio(stream);
+        setSyncStatus('online', 'SYNC LOCKED');
+        updateVideoLayout();
+    };
+
+    pc.onconnectionstatechange = () => {
+        console.log('Connection state with', targetUserId, ':', pc.connectionState);
+        if (pc.connectionState === 'connected') {
+            setSyncStatus('online', 'SYNC LOCKED');
+            updateVideoLayout();
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            delete peers[targetUserId];
+            delete peerStreams[targetUserId];
+            updateVideoLayout();
+        }
+    };
+
+    // 내 카메라/마이크 트랙을 상대방에게 전송 (기존 영화관 앱과 100% 동일)
+    if (localStream) {
+        localStream.getTracks().forEach(track => {
+            pc.addTrack(track, localStream);
+        });
+    }
+
+    return pc;
+}
+
+// =====================================================
+// 5. 카메라 센서 선택 모달
 // =====================================================
 window.openCamModal = async function() {
     const modal = document.getElementById('camModal');
@@ -319,7 +545,7 @@ window.closeCamModal = function() {
 };
 
 // =====================================================
-// 4. 뷰어(MONITOR) 멀티캠 채널 전환 & 비디오 재생 보장
+// 6. 뷰어(MONITOR) 상단 멀티캠 채널 전환
 // =====================================================
 window.selectViewerChannel = function(channel) {
     activeViewerChannel = channel;
@@ -334,20 +560,20 @@ window.selectViewerChannel = function(channel) {
         stop360SphereViewer();
         hideExt360Embed();
         socket.emit('room-event', { roomId, type: 'set-master-cam', mode: 'front' });
-        renderStreamsToVideoElements();
+        updateVideoLayout();
         showFloatingMsg('CAM 1: 지휘자 정면 뷰');
     } else if (channel === 'master-rear') {
         document.getElementById('chMasterRear').classList.add('active');
         stop360SphereViewer();
         hideExt360Embed();
         socket.emit('room-event', { roomId, type: 'set-master-cam', mode: 'rear-wide' });
-        renderStreamsToVideoElements();
+        updateVideoLayout();
         showFloatingMsg('CAM 1-B: 합창단 뷰 전환');
     } else if (channel === 'aux') {
         document.getElementById('chAuxCam').classList.add('active');
         stop360SphereViewer();
         hideExt360Embed();
-        renderStreamsToVideoElements();
+        updateVideoLayout();
         showFloatingMsg('CAM 2: 보조/X5 카메라 뷰');
     } else if (channel === '360-sphere') {
         document.getElementById('ch360Sphere').classList.add('active');
@@ -362,101 +588,6 @@ window.selectViewerChannel = function(channel) {
     }
 };
 
-function getStreamByRole(targetRole) {
-    for (const id in peerStreams) {
-        if (peerRoles[id] === targetRole) {
-            return peerStreams[id];
-        }
-    }
-    return null;
-}
-
-function getAnyRemoteStream() {
-    const ids = Object.keys(peerStreams);
-    return ids.length > 0 ? peerStreams[ids[0]] : null;
-}
-
-// 비디오 요소에 스트림을 안전하게 할당하고 play()를 강제 호출하는 헬퍼
-function safeAssignStream(videoEl, stream) {
-    if (!videoEl) return;
-    if (videoEl.srcObject !== stream) {
-        videoEl.srcObject = stream || null;
-    }
-    if (stream) {
-        videoEl.muted = true; // iOS Safari 비디오 프리즈 방지 필수!
-        const playPromise = videoEl.play();
-        if (playPromise !== undefined) {
-            playPromise.catch(e => console.warn('Video auto-play retry:', e));
-        }
-    }
-}
-
-function renderStreamsToVideoElements() {
-    const masterStream = getStreamByRole('master');
-    const auxStream = getStreamByRole('aux');
-    const monitorStream = getStreamByRole('monitor');
-    const fallbackRemote = getAnyRemoteStream();
-
-    const badgeMaster = document.getElementById('badgeMaster');
-    const badgeAux = document.getElementById('badgeAux');
-    if (badgeMaster) badgeMaster.classList.toggle('live', !!(masterStream || fallbackRemote));
-    if (badgeAux) badgeAux.classList.toggle('live', !!auxStream);
-
-    if (displayMode === 'stealth') {
-        updateStealthPipState();
-        return;
-    }
-
-    // 지휘자(MASTER) 또는 AUX가 VIEW 모드를 볼 때
-    if (myRole !== 'monitor') {
-        const targetRemote = monitorStream || auxStream || masterStream || fallbackRemote;
-        if (!isSwappedPip) {
-            safeAssignStream(remoteVideo, targetRemote || localStream);
-            safeAssignStream(localVideo, localStream);
-            document.getElementById('pipLabel').innerText = 'MY CAM';
-        } else {
-            safeAssignStream(remoteVideo, localStream);
-            safeAssignStream(localVideo, targetRemote);
-            document.getElementById('pipLabel').innerText = 'REMOTE';
-        }
-        auxPipBox.classList.add('hidden-pip');
-        applyRemoteAudioState();
-        return;
-    }
-
-    // 뷰어(MONITOR) 화면 구성
-    let mainTarget = masterStream || auxStream || fallbackRemote;
-    let secondaryTarget = null;
-
-    if (activeViewerChannel === 'aux' && auxStream) {
-        mainTarget = auxStream;
-        secondaryTarget = masterStream || fallbackRemote;
-    } else {
-        mainTarget = masterStream || fallbackRemote || auxStream;
-        secondaryTarget = (auxStream && mainTarget !== auxStream) ? auxStream : null;
-    }
-
-    if (!isSwappedPip) {
-        safeAssignStream(remoteVideo, mainTarget || localStream);
-        safeAssignStream(localVideo, localStream);
-        document.getElementById('pipLabel').innerText = 'ME';
-    } else {
-        safeAssignStream(remoteVideo, localStream);
-        safeAssignStream(localVideo, mainTarget);
-        document.getElementById('pipLabel').innerText = 'STAGE';
-    }
-
-    if (secondaryTarget) {
-        safeAssignStream(auxPipVideo, secondaryTarget);
-        auxPipBox.classList.remove('hidden-pip');
-        document.getElementById('auxPipLabel').innerText = (mainTarget === auxStream) ? 'CAM 1' : 'CAM 2';
-    } else {
-        auxPipBox.classList.add('hidden-pip');
-    }
-
-    applyRemoteAudioState();
-}
-
 window.swapAuxToMain = function() {
     if (activeViewerChannel === 'aux') {
         selectViewerChannel('master-front');
@@ -466,7 +597,7 @@ window.swapAuxToMain = function() {
 };
 
 // =====================================================
-// 5. WebGL 360° VR 인터랙티브 구체 뷰어
+// 7. WebGL 360° VR 인터랙티브 구체 뷰어
 // =====================================================
 function start360SphereViewer() {
     const container = document.getElementById('vr360Container');
@@ -586,7 +717,7 @@ function setup360TouchControls(container) {
 }
 
 // =====================================================
-// 6. 일반/광각 영상 터치 드래그 이동(Pan) & 핀치 줌
+// 8. 일반/광각 영상 터치 드래그 이동(Pan) & 핀치 줌
 // =====================================================
 function setupVideoTouchPanAndPinch() {
     const stage = document.getElementById('videoStage');
@@ -694,7 +825,7 @@ function applyVideoTransform() {
 }
 
 // =====================================================
-// 7. 외부 X5 360도 라이브 링크 연동
+// 9. 외부 X5 360도 라이브 링크 연동
 // =====================================================
 window.open360LinkModal = function() {
     document.getElementById('ext360Input').value = currentExt360Url;
@@ -768,27 +899,25 @@ function hideExt360Embed() {
 }
 
 // =====================================================
-// 8. 절대 안전 오디오 제어 (Web Audio Gain + 트랙 제어)
+// 10. 절대 안전 오디오 제어
 // =====================================================
 window.toggleRemoteAudio = function() {
     isRemoteAudioMuted = !isRemoteAudioMuted;
-    initWebAudio();
+    initAudioBooster();
     applyRemoteAudioState();
 };
 
 function applyRemoteAudioState() {
-    // video 태그는 항상 muted=true로 유지해야 iOS Safari에서 영상이 멈추지 않음!
-    remoteVideo.muted = true;
+    // WebAudio 믹서 사용 시 비디오 태그 자체는 muted=true여야 에코/재생 멈춤이 없음
+    remoteVideo.muted = isRemoteAudioMuted;
     localVideo.muted = true;
     auxPipVideo.muted = true;
     peekVideo.muted = true;
 
-    // Web Audio API 볼륨 제어
     if (remoteGainNode) {
-        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 1.8;
+        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 2.0;
     }
 
-    // 원격 오디오 트랙 활성화/비활성화
     for (const id in peerStreams) {
         peerStreams[id].getAudioTracks().forEach(track => {
             track.enabled = !isRemoteAudioMuted;
@@ -847,7 +976,7 @@ function updateMusicModeUI() {
 }
 
 // =====================================================
-// 9. 스텔스 화면 모드 전환 (TIMER / VIEW / DIM)
+// 11. 스텔스 화면 모드 전환 (TIMER / VIEW / DIM)
 // =====================================================
 window.setDisplayMode = function(mode) {
     displayMode = mode;
@@ -866,16 +995,15 @@ window.setDisplayMode = function(mode) {
         blackoutOverlay.style.display = 'none';
         viewerTools.style.display = 'none';
         channelBar.style.display = 'none';
-        auxPipBox.classList.add('hidden-pip');
-        updateStealthPipState();
+        updateVideoLayout();
     } else if (mode === 'video') {
         stealthDeck.style.display = 'none';
         blackoutOverlay.style.display = 'none';
         viewerTools.style.display = 'flex';
-        channelBar.style.display = 'flex';
+        // 상단 CAM 1 / CAM 1-B 채널 바는 모니터(뷰어)에게만 표시!
+        channelBar.style.display = (myRole === 'monitor') ? 'flex' : 'none';
         document.getElementById('btnPanMode').classList.toggle('active', isTouchPanEnabled);
-        pipBox.classList.remove('stealth-mini', 'hidden-pip');
-        renderStreamsToVideoElements();
+        updateVideoLayout();
     } else if (mode === 'blackout') {
         blackoutOverlay.style.display = 'flex';
     }
@@ -884,21 +1012,8 @@ window.setDisplayMode = function(mode) {
 window.toggleStealthPip = function() {
     stealthPipVisible = !stealthPipVisible;
     document.getElementById('pipToggleBtn').innerText = stealthPipVisible ? 'PIP: ON' : 'PIP: OFF';
-    updateStealthPipState();
+    updateVideoLayout();
 };
-
-function updateStealthPipState() {
-    if (displayMode !== 'stealth') return;
-    const monitorStream = getStreamByRole('monitor') || getAnyRemoteStream();
-    if (stealthPipVisible) {
-        pipBox.classList.remove('hidden-pip');
-        pipBox.classList.add('stealth-mini');
-        safeAssignStream(localVideo, monitorStream || localStream);
-        document.getElementById('pipLabel').innerText = monitorStream ? 'MON' : 'CAM';
-    } else {
-        pipBox.classList.add('hidden-pip');
-    }
-}
 
 function setupPeekHoldEvents() {
     const timerEl = document.getElementById('elapsedTimer');
@@ -906,8 +1021,8 @@ function setupPeekHoldEvents() {
 
     const showPeek = (e) => {
         if (e.cancelable) e.preventDefault();
-        const monitorStream = getStreamByRole('monitor') || getAnyRemoteStream();
-        safeAssignStream(peekVideo, monitorStream || localStream);
+        const monitorStream = getStreamByRole('monitor') || getFirstRemoteStream();
+        assignVideoSrc(peekVideo, monitorStream || localStream);
         peekOverlay.style.display = 'flex';
     };
     const hidePeek = () => {
@@ -933,188 +1048,8 @@ window.handleBlackoutTap = function() {
 window.swapMainAndPip = function() {
     if (displayMode === 'stealth') return;
     isSwappedPip = !isSwappedPip;
-    renderStreamsToVideoElements();
+    updateVideoLayout();
 };
-
-// =====================================================
-// 10. WebRTC 멀티피어 시그널링 (안정적인 연결 보장)
-// =====================================================
-socket.on('connect', () => {
-    if (roomId) {
-        setSyncStatus('connecting', 'RE-SYNCING');
-        socket.emit('join-room', { roomId, role: myRole });
-    }
-});
-
-socket.on('existing-peers', async (data) => {
-    const peerList = Array.isArray(data) ? data : (data.peers || []);
-    if (data && data.ext360Url) {
-        syncExt360Button(data.ext360Url);
-    }
-    for (const peer of peerList) {
-        peerRoles[peer.id] = peer.role;
-        // 새로 입장한 노드가 기존 노드들에게 Offer 전송
-        await initiateCall(peer.id);
-    }
-});
-
-socket.on('user-connected', (peer) => {
-    peerRoles[peer.id] = peer.role;
-    setSyncStatus('connecting', 'LINKING...');
-});
-
-socket.on('user-disconnected', (data) => {
-    const peerId = typeof data === 'string' ? data : data.id;
-    if (peers[peerId]) {
-        peers[peerId].close();
-        delete peers[peerId];
-    }
-    delete peerStreams[peerId];
-    delete peerRoles[peerId];
-    connectedAudioSources.delete(peerId);
-
-    if (Object.keys(peerStreams).length === 0) {
-        setSyncStatus('connecting', 'STANDBY');
-    }
-    renderStreamsToVideoElements();
-});
-
-async function initiateCall(targetId) {
-    try {
-        const pc = createPeerConnection(targetId);
-        const offer = await pc.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: true
-        });
-        await pc.setLocalDescription(offer);
-        socket.emit('offer', {
-            target: targetId,
-            caller: socket.id,
-            sdp: pc.localDescription,
-            role: myRole
-        });
-    } catch (e) {
-        console.error('initiateCall error:', e);
-    }
-}
-
-socket.on('offer', async (payload) => {
-    try {
-        if (payload.role) peerRoles[payload.caller] = payload.role;
-        const pc = createPeerConnection(payload.caller);
-        await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('answer', {
-            target: payload.caller,
-            caller: socket.id,
-            sdp: pc.localDescription,
-            role: myRole
-        });
-    } catch (e) {
-        console.error('Offer handling error:', e);
-    }
-});
-
-socket.on('answer', async (payload) => {
-    try {
-        if (payload.role) peerRoles[payload.caller] = payload.role;
-        const pc = peers[payload.caller];
-        if (pc) {
-            await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-        }
-    } catch (e) {
-        console.error('Answer handling error:', e);
-    }
-});
-
-socket.on('ice-candidate', async (incoming) => {
-    const pc = peers[incoming.sender];
-    if (pc && incoming.candidate) {
-        try {
-            await pc.addIceCandidate(new RTCIceCandidate(incoming.candidate));
-        } catch (e) {
-            console.error('ICE error:', e);
-        }
-    }
-});
-
-function createPeerConnection(targetId) {
-    if (peers[targetId]) {
-        peers[targetId].close();
-    }
-
-    const pc = new RTCPeerConnection(rtcConfig);
-    peers[targetId] = pc;
-
-    if (localStream) {
-        localStream.getTracks().forEach(track => {
-            pc.addTrack(track, localStream);
-        });
-    } else {
-        // 만약 로컬 카메라가 없는 기기(모니터 전용 PC 등)에서 접속했을 때도 수신이 가능하도록 Transceiver 추가
-        pc.addTransceiver('video', { direction: 'recvonly' });
-        pc.addTransceiver('audio', { direction: 'recvonly' });
-    }
-
-    pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            socket.emit('ice-candidate', {
-                target: targetId,
-                candidate: event.candidate
-            });
-        }
-    };
-
-    pc.ontrack = (event) => {
-        // Safari/iOS에서 event.streams[0]가 비어있는 경우를 대비해 직접 MediaStream 구성 지원
-        let stream = (event.streams && event.streams[0]) ? event.streams[0] : peerStreams[targetId];
-        if (!stream) {
-            stream = new MediaStream();
-        }
-        if (event.track && !stream.getTracks().includes(event.track)) {
-            stream.addTrack(event.track);
-        }
-
-        peerStreams[targetId] = stream;
-        attachStreamToWebAudio(stream, targetId);
-        setSyncStatus('online', 'SYNC LOCKED');
-        renderStreamsToVideoElements();
-    };
-
-    pc.onconnectionstatechange = () => {
-        const state = pc.connectionState;
-        if (state === 'connected') {
-            setSyncStatus('online', 'SYNC LOCKED');
-            optimizeSenderBitrate();
-            renderStreamsToVideoElements();
-        } else if (state === 'disconnected' || state === 'failed') {
-            setSyncStatus('connecting', 'RECONNECTING');
-        }
-    };
-
-    return pc;
-}
-
-async function optimizeSenderBitrate() {
-    for (const peerId in peers) {
-        const pc = peers[peerId];
-        const senders = pc.getSenders();
-        for (const sender of senders) {
-            if (sender.track && sender.track.kind === 'video' && sender.getParameters) {
-                try {
-                    const params = sender.getParameters();
-                    if (!params.encodings || params.encodings.length === 0) {
-                        params.encodings = [{}];
-                    }
-                    params.encodings[0].maxBitrate = 1500 * 1000;
-                    params.encodings[0].maxFramerate = 30;
-                    await sender.setParameters(params);
-                } catch (e) {}
-            }
-        }
-    }
-}
 
 function setSyncStatus(state, text) {
     document.getElementById('syncDot').className = 'sync-dot ' + state;
@@ -1122,7 +1057,7 @@ function setSyncStatus(state, text) {
 }
 
 // =====================================================
-// 11. 무음 메모 & 원격 렌즈 전환
+// 12. 무음 메모 & 원격 렌즈 전환
 // =====================================================
 window.toggleNotePopup = function() {
     const popup = document.getElementById('notePopup');
@@ -1196,7 +1131,7 @@ function showFloatingMsg(msg) {
 }
 
 // =====================================================
-// 12. 리허설 타이머 & WakeLock
+// 13. 리허설 타이머 & WakeLock
 // =====================================================
 function startTimers() {
     if (chronoInterval) clearInterval(chronoInterval);

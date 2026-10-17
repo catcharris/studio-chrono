@@ -251,6 +251,9 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
     localStream.getAudioTracks().forEach(track => {
         track.enabled = isLocalMicEnabled;
     });
+    localStream.getVideoTracks().forEach(track => {
+        track.enabled = isLocalCamEnabled;
+    });
 
     const vTrack = localStream.getVideoTracks()[0];
     if (vTrack) {
@@ -510,8 +513,29 @@ function createPeerConnection(targetUserId) {
 }
 
 // =====================================================
-// 6. 카메라 센서 선택 모달 (깔끔한 3개 항목)
+// 6. 카메라 센서 선택 모달 (카메라 끄기 OFF 포함!)
 // =====================================================
+let isLocalCamEnabled = true;
+
+function setLocalCamEnabled(enabled) {
+    isLocalCamEnabled = enabled;
+    if (localStream) {
+        localStream.getVideoTracks().forEach(track => {
+            track.enabled = isLocalCamEnabled;
+        });
+    }
+    const btnCam = document.getElementById('btnCam');
+    const labelCam = document.getElementById('labelCam');
+    if (!isLocalCamEnabled) {
+        if (btnCam) btnCam.className = 'dock-btn mic-off';
+        if (labelCam) labelCam.innerText = 'OFF';
+    } else {
+        if (btnCam) btnCam.className = 'dock-btn';
+        const vTrack = localStream ? localStream.getVideoTracks()[0] : null;
+        if (labelCam) labelCam.innerText = getShortCamName(vTrack ? vTrack.label : '', currentFacingMode);
+    }
+}
+
 window.openCamModal = async function() {
     const modal = document.getElementById('camModal');
     const container = document.getElementById('camListContainer');
@@ -533,56 +557,82 @@ window.openCamModal = async function() {
             }
         });
 
-        const isFrontSel = (currentFacingMode === 'user' && !currentVideoDeviceId);
+        // 1) 전면 카메라 (Front)
+        const isFrontSel = isLocalCamEnabled && (currentFacingMode === 'user' && !currentVideoDeviceId);
         const btnFront = document.createElement('button');
         btnFront.className = 'cam-item' + (isFrontSel ? ' selected' : '');
         btnFront.innerHTML = `<span>전면 카메라 (Front)</span><span>${isFrontSel ? '● FRONT' : 'FRONT'}</span>`;
         btnFront.onclick = async () => {
             currentFacingMode = 'user';
             currentVideoDeviceId = null;
+            isLocalCamEnabled = true;
             closeCamModal();
             await acquireMediaStream(null, 'user');
+            setLocalCamEnabled(true);
         };
         container.appendChild(btnFront);
 
-        const isRearSel = (currentFacingMode === 'environment' && !currentVideoDeviceId);
+        // 2) 후면 카메라 (Rear 1x)
+        const isRearSel = isLocalCamEnabled && (currentFacingMode === 'environment' && !currentVideoDeviceId);
         const btnRear = document.createElement('button');
         btnRear.className = 'cam-item' + (isRearSel ? ' selected' : '');
         btnRear.innerHTML = `<span>후면 카메라 (Rear 1x)</span><span>${isRearSel ? '● REAR 1x' : 'REAR 1x'}</span>`;
         btnRear.onclick = async () => {
             currentFacingMode = 'environment';
             currentVideoDeviceId = null;
+            isLocalCamEnabled = true;
             closeCamModal();
             await acquireMediaStream(null, 'environment');
+            setLocalCamEnabled(true);
         };
         container.appendChild(btnRear);
 
+        // 3) 후면 초광각 (Wide 0.5x)
         if (ultraWideDev) {
-            const isUltraSel = (currentVideoDeviceId === ultraWideDev.deviceId);
+            const isUltraSel = isLocalCamEnabled && (currentVideoDeviceId === ultraWideDev.deviceId);
             const btnUltra = document.createElement('button');
             btnUltra.className = 'cam-item' + (isUltraSel ? ' selected' : '');
             btnUltra.innerHTML = `<span>후면 초광각 (Wide 0.5x)</span><span>${isUltraSel ? '● WIDE 0.5x' : 'WIDE 0.5x'}</span>`;
             btnUltra.onclick = async () => {
                 currentFacingMode = 'environment';
                 currentVideoDeviceId = ultraWideDev.deviceId;
+                isLocalCamEnabled = true;
                 closeCamModal();
                 await acquireMediaStream(ultraWideDev.deviceId, 'environment');
+                setLocalCamEnabled(true);
             };
             container.appendChild(btnUltra);
         }
 
+        // 4) 외장 카메라
         externalDevs.forEach((dev) => {
-            const isExtSel = (currentVideoDeviceId === dev.deviceId);
+            const isExtSel = isLocalCamEnabled && (currentVideoDeviceId === dev.deviceId);
             const btnExt = document.createElement('button');
             btnExt.className = 'cam-item' + (isExtSel ? ' selected' : '');
             btnExt.innerHTML = `<span>외장 카메라 (${dev.label})</span><span>${isExtSel ? '● EXT' : 'EXT'}</span>`;
             btnExt.onclick = async () => {
                 currentVideoDeviceId = dev.deviceId;
+                isLocalCamEnabled = true;
                 closeCamModal();
                 await acquireMediaStream(dev.deviceId, null);
+                setLocalCamEnabled(true);
             };
             container.appendChild(btnExt);
         });
+
+        // 5) 카메라 끄기 (Video OFF)
+        const isOffSel = !isLocalCamEnabled;
+        const btnOff = document.createElement('button');
+        btnOff.className = 'cam-item' + (isOffSel ? ' selected' : '');
+        btnOff.style.borderColor = isOffSel ? '#f59e0b' : '#2e2e38';
+        btnOff.style.color = isOffSel ? '#fbbf24' : '#f87171';
+        btnOff.innerHTML = `<span>카메라 끄기 (Video OFF)</span><span>${isOffSel ? '● OFF' : 'OFF'}</span>`;
+        btnOff.onclick = () => {
+            setLocalCamEnabled(false);
+            closeCamModal();
+            showFloatingMsg('내 카메라가 꺼졌습니다 (오디오만 유지)');
+        };
+        container.appendChild(btnOff);
     } catch (e) {
         console.error('Device enumeration error:', e);
     }

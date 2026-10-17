@@ -5,6 +5,38 @@ const socket = io({
     reconnectionDelayMax: 5000
 });
 
+// =====================================================
+// 0. iOS 사파리 페이지 전체 확대(Pinch/Double-tap Zoom) 100% 원천 차단!
+// =====================================================
+document.addEventListener('gesturestart', function(e) {
+    e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('gesturechange', function(e) {
+    e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('gestureend', function(e) {
+    e.preventDefault();
+}, { passive: false });
+
+// 두 손가락 터치 시 브라우저 기본 줌 차단 (360° VR 캔버스 내부만 예외)
+document.addEventListener('touchmove', function(e) {
+    if (e.touches && e.touches.length > 1) {
+        e.preventDefault();
+    }
+}, { passive: false });
+
+// 더블탭으로 인한 브라우저 레이아웃 확대 차단
+let lastTouchEndTime = 0;
+document.addEventListener('touchend', function(e) {
+    const now = Date.now();
+    if (now - lastTouchEndTime <= 300) {
+        e.preventDefault();
+    }
+    lastTouchEndTime = now;
+}, { passive: false });
+
 // 역할 및 방 상태
 let roomId = '';
 let myRole = 'master'; // 'master' (지휘자) | 'monitor' (뷰어) | 'aux' (합창단/X5 보조 카메라)
@@ -22,7 +54,7 @@ let isMusicRawMode = true;
 let currentVideoDeviceId = null;
 let currentFacingMode = 'user';
 
-// Web Audio API (기존 영화관 앱과 동일한 구조)
+// Web Audio API
 let remoteAudioCtx = null;
 let remoteGainNode = null;
 
@@ -33,13 +65,10 @@ let stealthPipVisible = false;
 let isSwappedPip = false;
 let currentExt360Url = '';
 
-// 비디오 회전 / 줌 / 터치 패닝 상태
+// 비디오 회전 / 배율 상태 (레이아웃은 고정하고 비디오만 깔끔하게 제어)
 let remoteRotation = 0;
 let remoteZoom = 1;
 let remoteMirrored = false;
-let isTouchPanEnabled = true;
-let panX = 0;
-let panY = 0;
 
 // Three.js 360° VR Sphere 변수
 let vrScene = null;
@@ -58,7 +87,6 @@ let chronoRunning = true;
 let chronoInterval = null;
 let wakeLock = null;
 
-// STUN + 무료 글로벌 TURN 서버 (서로 다른 네트워크/LTE-WiFi 방화벽에서도 100% 영상 전송 보장!)
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -175,14 +203,13 @@ window.startSession = async function(role) {
     setDisplayMode(displayMode);
     startTimers();
     setupPeekHoldEvents();
-    setupVideoTouchPanAndPinch();
 
     setSyncStatus('connecting', 'WAIT SYNC');
     socket.emit('join-room', { roomId, role: myRole });
 };
 
 // =====================================================
-// 2. 카메라 & 오디오 스트림 획득 (기존 영화관 앱과 동일한 안정적 제약조건)
+// 2. 카메라 & 오디오 스트림 획득
 // =====================================================
 async function acquireMediaStream(deviceId = null, facingMode = 'user') {
     if (localStream) {
@@ -224,7 +251,6 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
 
     updateVideoLayout();
 
-    // 이미 연결된 Peer가 있으면 끊김 없이 트랙 교체
     for (const peerId in peers) {
         const pc = peers[peerId];
         const senders = pc.getSenders();
@@ -254,7 +280,7 @@ function getShortCamName(label, facing) {
 }
 
 // =====================================================
-// 3. 화면 배치 로직 (절대 내 화면이 큰 화면을 덮어쓰지 않도록 명확히 분리!)
+// 3. 화면 배치 로직
 // =====================================================
 function getStreamByRole(targetRole) {
     for (const id in peerStreams) {
@@ -286,19 +312,16 @@ function updateVideoLayout() {
     const monitorStream = getStreamByRole('monitor');
     const anyRemoteStream = getFirstRemoteStream();
 
-    // 상단 채널 배지 표시
     const badgeMaster = document.getElementById('badgeMaster');
     const badgeAux = document.getElementById('badgeAux');
     if (badgeMaster) badgeMaster.classList.toggle('live', !!(masterStream || anyRemoteStream));
     if (badgeAux) badgeAux.classList.toggle('live', !!auxStream);
 
-    // 1) 스텔스 타이머 모드일 때 (지휘자 폰)
     if (displayMode === 'stealth') {
         auxPipBox.classList.add('hidden-pip');
         if (stealthPipVisible) {
             pipBox.classList.remove('hidden-pip');
             pipBox.classList.add('stealth-mini');
-            // 스텔스 PIP에는 무조건 상대방(모니터) 화면을 표시! (없으면 내 카메라)
             const targetPip = monitorStream || anyRemoteStream || localStream;
             assignVideoSrc(localVideo, targetPip);
             document.getElementById('pipLabel').innerText = (monitorStream || anyRemoteStream) ? 'MON' : 'MY CAM';
@@ -308,13 +331,9 @@ function updateVideoLayout() {
         return;
     }
 
-    // 2) 일반 VIEW 모드일 때
     pipBox.classList.remove('stealth-mini', 'hidden-pip');
 
     if (myRole === 'monitor') {
-        // [모니터(뷰어) 폰]:
-        // 큰 전체화면(remoteVideo) = 무조건 지휘자(master) 또는 보조캠(aux)! 절대 내 카메라(localStream)를 큰 화면에 넣지 않음!
-        // 작은 PIP화면(localVideo) = 내 카메라(localStream)
         let mainTarget = (activeViewerChannel === 'aux' && auxStream)
             ? auxStream
             : (masterStream || anyRemoteStream || auxStream || null);
@@ -339,9 +358,6 @@ function updateVideoLayout() {
             auxPipBox.classList.add('hidden-pip');
         }
     } else {
-        // [지휘자(MASTER) 폰에서 VIEW 모드를 눌렀을 때]:
-        // 큰 전체화면(remoteVideo) = 모니터(상대방) 화면!
-        // 작은 PIP화면(localVideo) = 지휘자(내) 화면!
         const targetRemote = monitorStream || anyRemoteStream || null;
 
         if (!isSwappedPip) {
@@ -360,14 +376,13 @@ function updateVideoLayout() {
 }
 
 // =====================================================
-// 4. WebRTC 시그널링 (기존 영화관 앱과 100% 동일한 검증된 연결 방식!)
+// 4. WebRTC 시그널링
 // =====================================================
 socket.on('user-connected', async (peerInfo) => {
     const userId = typeof peerInfo === 'string' ? peerInfo : peerInfo.id;
     const role = (typeof peerInfo === 'object' && peerInfo.role) ? peerInfo.role : 'monitor';
     peerRoles[userId] = role;
 
-    console.log('User connected, creating offer to:', userId, role);
     setSyncStatus('connecting', 'LINKING...');
 
     const pc = createPeerConnection(userId);
@@ -383,7 +398,6 @@ socket.on('user-connected', async (peerInfo) => {
 });
 
 socket.on('offer', async (payload) => {
-    console.log('Received offer from:', payload.caller, payload.role);
     if (payload.role) peerRoles[payload.caller] = payload.role;
 
     const pc = createPeerConnection(payload.caller);
@@ -401,7 +415,6 @@ socket.on('offer', async (payload) => {
 });
 
 socket.on('answer', async (payload) => {
-    console.log('Received answer from:', payload.caller, payload.role);
     if (payload.role) peerRoles[payload.caller] = payload.role;
 
     const pc = peers[payload.caller];
@@ -455,7 +468,6 @@ function createPeerConnection(targetUserId) {
     };
 
     pc.ontrack = (event) => {
-        console.log('ontrack received from:', targetUserId, event.streams);
         const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
         peerStreams[targetUserId] = stream;
 
@@ -465,7 +477,6 @@ function createPeerConnection(targetUserId) {
     };
 
     pc.onconnectionstatechange = () => {
-        console.log('Connection state with', targetUserId, ':', pc.connectionState);
         if (pc.connectionState === 'connected') {
             setSyncStatus('online', 'SYNC LOCKED');
             updateVideoLayout();
@@ -476,7 +487,6 @@ function createPeerConnection(targetUserId) {
         }
     };
 
-    // 내 카메라/마이크 트랙을 상대방에게 전송 (기존 영화관 앱과 100% 동일)
     if (localStream) {
         localStream.getTracks().forEach(track => {
             pc.addTrack(track, localStream);
@@ -579,7 +589,7 @@ window.selectViewerChannel = function(channel) {
         document.getElementById('ch360Sphere').classList.add('active');
         hideExt360Embed();
         start360SphereViewer();
-        showFloatingMsg('360° VR 모드: 화면을 드래그해 회전하세요');
+        showFloatingMsg('360° VR 모드');
     } else if (channel === 'ext-360') {
         document.getElementById('chExt360').classList.add('active');
         stop360SphereViewer();
@@ -597,7 +607,7 @@ window.swapAuxToMain = function() {
 };
 
 // =====================================================
-// 7. WebGL 360° VR 인터랙티브 구체 뷰어
+// 7. WebGL 360° VR 구체 뷰어 (360° VR 탭 전용)
 // =====================================================
 function start360SphereViewer() {
     const container = document.getElementById('vr360Container');
@@ -664,8 +674,6 @@ function setup360TouchControls(container) {
     let isDown = false;
     let startX = 0, startY = 0;
     let startLon = 0, startLat = 0;
-    let initialPinchDist = null;
-    let initialFov = 75;
 
     const onDown = (x, y) => {
         isDown = true;
@@ -679,7 +687,7 @@ function setup360TouchControls(container) {
         vrLon = (startX - x) * 0.25 + startLon;
         vrLat = (y - startY) * 0.25 + startLat;
     };
-    const onUp = () => { isDown = false; initialPinchDist = null; };
+    const onUp = () => { isDown = false; };
 
     container.addEventListener('mousedown', e => onDown(e.clientX, e.clientY));
     window.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
@@ -688,28 +696,12 @@ function setup360TouchControls(container) {
     container.addEventListener('touchstart', e => {
         if (e.touches.length === 1) {
             onDown(e.touches[0].clientX, e.touches[0].clientY);
-        } else if (e.touches.length === 2) {
-            isDown = false;
-            initialPinchDist = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX,
-                e.touches[0].clientY - e.touches[1].clientY
-            );
-            initialFov = vrFov;
         }
     }, { passive: true });
 
     container.addEventListener('touchmove', e => {
         if (e.touches.length === 1 && isDown) {
             onMove(e.touches[0].clientX, e.touches[0].clientY);
-        } else if (e.touches.length === 2 && initialPinchDist) {
-            const dist = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX,
-                e.touches[0].clientY - e.touches[1].clientY
-            );
-            const scale = initialPinchDist / dist;
-            vrFov = Math.max(30, Math.min(100, initialFov * scale));
-            vrCamera.fov = vrFov;
-            vrCamera.updateProjectionMatrix();
         }
     }, { passive: true });
 
@@ -717,98 +709,17 @@ function setup360TouchControls(container) {
 }
 
 // =====================================================
-// 8. 일반/광각 영상 터치 드래그 이동(Pan) & 핀치 줌
+// 8. 깔끔한 비디오 회전 / 배율 / 반전 (레이아웃 흔들림 0%)
 // =====================================================
-function setupVideoTouchPanAndPinch() {
-    const stage = document.getElementById('videoStage');
-    let isDragging = false;
-    let startX = 0, startY = 0;
-    let startPanX = 0, startPanY = 0;
-    let initPinch = null;
-    let initZoom = 1;
-
-    stage.addEventListener('touchstart', e => {
-        if (!isTouchPanEnabled) return;
-        if (e.touches.length === 1) {
-            isDragging = true;
-            startX = e.touches[0].clientX;
-            startY = e.touches[0].clientY;
-            startPanX = panX;
-            startPanY = panY;
-        } else if (e.touches.length === 2) {
-            isDragging = false;
-            initPinch = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX,
-                e.touches[0].clientY - e.touches[1].clientY
-            );
-            initZoom = remoteZoom;
-        }
-    }, { passive: true });
-
-    stage.addEventListener('touchmove', e => {
-        if (!isTouchPanEnabled) return;
-        if (e.touches.length === 1 && isDragging) {
-            panX = startPanX + (e.touches[0].clientX - startX);
-            panY = startPanY + (e.touches[0].clientY - startY);
-            applyVideoTransform();
-        } else if (e.touches.length === 2 && initPinch) {
-            const dist = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX,
-                e.touches[0].clientY - e.touches[1].clientY
-            );
-            remoteZoom = Math.max(1, Math.min(3.5, +(initZoom * (dist / initPinch)).toFixed(2)));
-            document.getElementById('zoomBtn').innerText = Math.round(remoteZoom * 10) / 10 + 'x';
-            applyVideoTransform();
-        }
-    }, { passive: true });
-
-    stage.addEventListener('touchend', () => {
-        isDragging = false;
-        initPinch = null;
-    });
-
-    stage.addEventListener('mousedown', e => {
-        if (!isTouchPanEnabled) return;
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        startPanX = panX;
-        startPanY = panY;
-    });
-    window.addEventListener('mousemove', e => {
-        if (!isDragging || !isTouchPanEnabled) return;
-        panX = startPanX + (e.clientX - startX);
-        panY = startPanY + (e.clientY - startY);
-        applyVideoTransform();
-    });
-    window.addEventListener('mouseup', () => { isDragging = false; });
-}
-
-window.toggleTouchPanMode = function() {
-    isTouchPanEnabled = !isTouchPanEnabled;
-    document.getElementById('btnPanMode').classList.toggle('active', isTouchPanEnabled);
-    showFloatingMsg(isTouchPanEnabled ? '터치 드래그 화각 이동: ON' : '터치 드래그 화각 이동: OFF');
-};
-
-window.resetPanAndZoom = function() {
-    panX = 0;
-    panY = 0;
-    remoteZoom = 1;
-    remoteRotation = 0;
-    document.getElementById('zoomBtn').innerText = '1x';
-    applyVideoTransform();
-};
-
 window.rotateRemoteVideo = function() {
     remoteRotation = (remoteRotation + 90) % 360;
     applyVideoTransform();
 };
 
 window.zoomRemoteVideo = function() {
-    const levels = [1, 1.5, 2.0, 2.8];
+    const levels = [1, 1.4, 1.8, 2.2];
     const nextIdx = (levels.indexOf(remoteZoom) + 1) % levels.length;
     remoteZoom = levels[nextIdx];
-    if (remoteZoom === 1) { panX = 0; panY = 0; }
     document.getElementById('zoomBtn').innerText = remoteZoom + 'x';
     applyVideoTransform();
 };
@@ -821,7 +732,7 @@ window.mirrorRemoteVideo = function() {
 function applyVideoTransform() {
     const scaleX = remoteMirrored ? -remoteZoom : remoteZoom;
     const scaleY = remoteZoom;
-    remoteVideo.style.transform = `translate(${panX}px, ${panY}px) rotate(${remoteRotation}deg) scale(${scaleX}, ${scaleY})`;
+    remoteVideo.style.transform = `rotate(${remoteRotation}deg) scale(${scaleX}, ${scaleY})`;
 }
 
 // =====================================================
@@ -908,7 +819,6 @@ window.toggleRemoteAudio = function() {
 };
 
 function applyRemoteAudioState() {
-    // WebAudio 믹서 사용 시 비디오 태그 자체는 muted=true여야 에코/재생 멈춤이 없음
     remoteVideo.muted = isRemoteAudioMuted;
     localVideo.muted = true;
     auxPipVideo.muted = true;
@@ -1000,9 +910,7 @@ window.setDisplayMode = function(mode) {
         stealthDeck.style.display = 'none';
         blackoutOverlay.style.display = 'none';
         viewerTools.style.display = 'flex';
-        // 상단 CAM 1 / CAM 1-B 채널 바는 모니터(뷰어)에게만 표시!
         channelBar.style.display = (myRole === 'monitor') ? 'flex' : 'none';
-        document.getElementById('btnPanMode').classList.toggle('active', isTouchPanEnabled);
         updateVideoLayout();
     } else if (mode === 'blackout') {
         blackoutOverlay.style.display = 'flex';

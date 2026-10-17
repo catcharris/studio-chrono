@@ -2,19 +2,29 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>STUDIO CHRONO — Acoustic Timer</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;500;700&family=Inter:wght@400;500;600;700&display=swap');
 
-        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation; /* iOS 더블탭 및 핀치로 인한 페이지 레이아웃 확대 원천 차단 */
+        }
         body, html {
-            margin: 0; padding: 0; width: 100%; height: 100dvh;
+            position: fixed;
+            inset: 0;
+            margin: 0; padding: 0; width: 100%; height: 100%;
             background: #08080a; color: #e4e4e7;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             overflow: hidden;
+            overscroll-behavior: none;
         }
 
         .material-symbols-rounded { font-size: 20px; vertical-align: middle; }
@@ -52,8 +62,8 @@
         .input-group input {
             width: 100%; padding: 14px 16px; border-radius: 12px;
             background: #09090b; border: 1px solid #27272a; color: #fff;
-            font-family: 'JetBrains Mono', monospace; font-size: 15px; outline: none;
-            user-select: text;
+            font-family: 'JetBrains Mono', monospace; font-size: 16px; /* 16px 이상이어야 iOS 자동 줌 안 됨 */
+            outline: none; user-select: text; -webkit-user-select: text;
         }
         .input-group input:focus { border-color: #52525b; }
 
@@ -80,9 +90,9 @@
         }
 
         /* =========================================
-           2. 메인 워크스페이스 (공통 레이아웃)
+           2. 메인 워크스페이스 (고정 레이아웃)
            ========================================= */
-        #mainScreen { position: absolute; inset: 0; display: none; background: #000; }
+        #mainScreen { position: fixed; inset: 0; display: none; background: #000; overflow: hidden; }
 
         /* 상단 미니 상태바 */
         #topBar {
@@ -180,19 +190,18 @@
         }
 
         /* =========================================
-           5. 비디오 & 360도 VR 스테이지
+           5. 비디오 & 360도 VR 스테이지 (고정 컨테이너)
            ========================================= */
         #videoStage {
             position: absolute; inset: 0; display: flex;
             align-items: center; justify-content: center; overflow: hidden; z-index: 10;
-            touch-action: none;
         }
         #remoteVideo {
             width: 100%; height: 100%; object-fit: contain;
-            transition: transform 0.1s ease-out;
+            transition: transform 0.2s ease-out;
         }
 
-        /* WebGL 360 Sphere 캔버스 컨테이너 */
+        /* WebGL 360 Sphere 캔버스 컨테이너 (360° VR 모드 전용) */
         #vr360Container {
             position: absolute; inset: 0; display: none; z-index: 14;
             background: #000; touch-action: none; cursor: grab;
@@ -205,7 +214,7 @@
             font-family: 'JetBrains Mono', monospace; font-size: 11px; pointer-events: none;
         }
 
-        /* 외부 X5 360 라이브 (YouTube 360 등) 임베드 컨테이너 */
+        /* 외부 X5 360 라이브 임베드 컨테이너 */
         #ext360Wrapper {
             position: absolute; inset: 0; display: none; z-index: 15; background: #000;
         }
@@ -213,7 +222,7 @@
             width: 100%; height: 100%; border: none;
         }
 
-        /* PIP 박스들 (내 카메라 + 세컨드 카메라 동시 PIP 지원) */
+        /* PIP 박스들 */
         #pipContainer {
             position: absolute; bottom: max(92px, calc(env(safe-area-inset-bottom) + 82px)); right: 14px;
             display: flex; flex-direction: column; gap: 10px; z-index: 30;
@@ -259,7 +268,7 @@
         .blackout-dot { width: 4px; height: 4px; border-radius: 50%; background: #18181b; }
 
         /* =========================================
-           6. 모니터 우측 툴바 & 하단 컨트롤 독
+           6. 모니터 우측 툴바 & 하단 컨트롤 독 (깔끔하게 정리)
            ========================================= */
         #viewerTools {
             position: absolute; top: max(105px, calc(env(safe-area-inset-top) + 95px)); right: 14px;
@@ -271,7 +280,6 @@
             color: #fff; display: flex; align-items: center; justify-content: center;
             cursor: pointer; backdrop-filter: blur(10px); font-family: 'JetBrains Mono', monospace; font-size: 10px;
         }
-        .tool-circle.active { border-color: #10b981; color: #34d399; background: rgba(16, 185, 129, 0.15); }
         .tool-circle:active { transform: scale(0.92); }
 
         #bottomDock {
@@ -325,7 +333,8 @@
         }
         #noteInput {
             flex: 1; background: transparent; border: none; color: #fff;
-            font-size: 14px; outline: none; padding: 6px; user-select: text;
+            font-size: 16px; /* iOS 키보드 올라올 때 화면 확대 방지용 16px 고정 */
+            outline: none; padding: 6px; user-select: text; -webkit-user-select: text;
         }
         .note-send-btn {
             background: #e4e4e7; color: #09090b; border: none;
@@ -345,7 +354,7 @@
 
     <!-- 1. 로비 화면 -->
     <div id="lobbyScreen">
-        <div class="app-badge">ACOUSTIC MULTI-SYNC v3.0</div>
+        <div class="app-badge">ACOUSTIC MULTI-SYNC v3.3</div>
         <h1 class="app-title">STUDIO CHRONO</h1>
         <p class="app-sub">Precision Rehearsal Timer & Multi-Angle Monitor</p>
 
@@ -355,19 +364,16 @@
                 <input type="text" id="sessionInput" value="rehearsal-01" autocomplete="off">
             </div>
 
-            <!-- 1) 지휘자(나 - 아이폰 보면대) 입장 -->
             <button class="btn-primary" onclick="startSession('master')">
                 <span class="material-symbols-rounded">timer</span>
                 MASTER (CONDUCTOR CAM)
             </button>
 
-            <!-- 2) 모니터(뷰어) 입장 -->
             <button class="btn-secondary" onclick="startSession('monitor')">
                 <span class="material-symbols-rounded">visibility</span>
                 MONITOR (MULTI-VIEWER)
             </button>
 
-            <!-- 3) 세컨드 카메라(합창단 전체 샷 / X5 보조 기기) 입장 -->
             <button class="btn-aux" onclick="startSession('aux')">
                 <span class="material-symbols-rounded">videocam</span>
                 AUX SENSOR (CHOIR / X5 CAM 2)
@@ -413,7 +419,7 @@
                 <span>CAM 2 (X5/전체샷)</span>
             </button>
             <button id="ch360Sphere" class="ch-btn" onclick="selectViewerChannel('360-sphere')">
-                <span>360° VR 드래그</span>
+                <span>360° VR</span>
             </button>
             <button id="chExt360" class="ch-btn" onclick="selectViewerChannel('ext-360')" style="display:none;">
                 <span class="ch-badge live"></span>
@@ -439,22 +445,22 @@
             </div>
         </div>
 
-        <!-- 5. 메인 비디오 스테이지 (터치 드래그 패닝 & 핀치 줌 지원) -->
+        <!-- 5. 메인 비디오 스테이지 (화면 흔들림 없이 고정) -->
         <div id="videoStage">
             <video id="remoteVideo" autoplay playsinline></video>
         </div>
 
-        <!-- WebGL 360도 인터랙티브 구체 뷰어 (화면을 상하좌우 드래그해 360도 회전) -->
+        <!-- WebGL 360도 인터랙티브 구체 뷰어 (360° VR 탭 선택 시에만 활성화) -->
         <div id="vr360Container">
-            <div class="vr-hint">화면을 손가락으로 드래그하여 360° 회전 / 두 손가락 줌</div>
+            <div class="vr-hint">360° VR 모드: 드래그하여 회전</div>
         </div>
 
-        <!-- 외부 X5 360도 라이브 플레이어 (유튜브 360 등) -->
+        <!-- 외부 X5 360도 라이브 플레이어 -->
         <div id="ext360Wrapper">
             <iframe id="ext360Iframe" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; vr" allowfullscreen></iframe>
         </div>
 
-        <!-- PIP 컨테이너 (내 카메라 + 보조 카메라 동시 표시 및 클릭 시 메인 화면 전환) -->
+        <!-- PIP 컨테이너 -->
         <div id="pipContainer">
             <div id="auxPipBox" class="pip-card hidden-pip" onclick="swapAuxToMain()">
                 <video id="auxPipVideo" autoplay playsinline muted></video>
@@ -477,19 +483,13 @@
             <div class="blackout-dot"></div>
         </div>
 
-        <!-- 모니터용 우측 컨트롤 툴바 -->
+        <!-- 모니터용 우측 컨트롤 툴바 (손바닥 버튼 제거! 깔끔하게 회전/배율/반전만 제공) -->
         <div id="viewerTools">
-            <button class="tool-circle" id="btnPanMode" onclick="toggleTouchPanMode()" title="터치 드래그 이동 모드">
-                <span class="material-symbols-rounded">pan_tool</span>
-            </button>
             <button class="tool-circle" onclick="rotateRemoteVideo()" title="90도 회전">
                 <span class="material-symbols-rounded">rotate_right</span>
             </button>
-            <button class="tool-circle" onclick="zoomRemoteVideo()" id="zoomBtn" title="확대/축소">
+            <button class="tool-circle" onclick="zoomRemoteVideo()" id="zoomBtn" title="확대 배율">
                 1x
-            </button>
-            <button class="tool-circle" onclick="resetPanAndZoom()" title="화면 중앙 초기화">
-                <span class="material-symbols-rounded">center_focus_strong</span>
             </button>
             <button class="tool-circle" onclick="mirrorRemoteVideo()" title="좌우반전">
                 <span class="material-symbols-rounded">flip</span>
@@ -549,7 +549,7 @@
             </div>
         </div>
 
-        <!-- X5 360 라이브 스트림(YouTube 360 일부공개 / 커스텀 URL) 연동 모달 -->
+        <!-- X5 360 라이브 스트림 연동 모달 -->
         <div id="link360Modal" class="modal-backdrop" onclick="if(event.target===this) close360LinkModal()">
             <div class="modal-box">
                 <div class="modal-title">
@@ -572,6 +572,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=32"></script>
+    <script src="script.js?v=33"></script>
 </body>
 </html>

@@ -536,7 +536,7 @@ window.openCamModal = async function() {
         const isFrontSel = (currentFacingMode === 'user' && !currentVideoDeviceId);
         const btnFront = document.createElement('button');
         btnFront.className = 'cam-item' + (isFrontSel ? ' selected' : '');
-        btnFront.innerHTML = `<span>전면 카메라 (지휘자 정면)</span><span>${isFrontSel ? '● FRONT' : 'FRONT'}</span>`;
+        btnFront.innerHTML = `<span>전면 카메라 (Front)</span><span>${isFrontSel ? '● FRONT' : 'FRONT'}</span>`;
         btnFront.onclick = async () => {
             currentFacingMode = 'user';
             currentVideoDeviceId = null;
@@ -548,7 +548,7 @@ window.openCamModal = async function() {
         const isRearSel = (currentFacingMode === 'environment' && !currentVideoDeviceId);
         const btnRear = document.createElement('button');
         btnRear.className = 'cam-item' + (isRearSel ? ' selected' : '');
-        btnRear.innerHTML = `<span>후면 카메라 (합창단 1x)</span><span>${isRearSel ? '● REAR 1x' : 'REAR 1x'}</span>`;
+        btnRear.innerHTML = `<span>후면 카메라 (Rear 1x)</span><span>${isRearSel ? '● REAR 1x' : 'REAR 1x'}</span>`;
         btnRear.onclick = async () => {
             currentFacingMode = 'environment';
             currentVideoDeviceId = null;
@@ -561,7 +561,7 @@ window.openCamModal = async function() {
             const isUltraSel = (currentVideoDeviceId === ultraWideDev.deviceId);
             const btnUltra = document.createElement('button');
             btnUltra.className = 'cam-item' + (isUltraSel ? ' selected' : '');
-            btnUltra.innerHTML = `<span>후면 초광각 (합창단 전체 0.5x)</span><span>${isUltraSel ? '● WIDE 0.5x' : 'WIDE 0.5x'}</span>`;
+            btnUltra.innerHTML = `<span>후면 초광각 (Wide 0.5x)</span><span>${isUltraSel ? '● WIDE 0.5x' : 'WIDE 0.5x'}</span>`;
             btnUltra.onclick = async () => {
                 currentFacingMode = 'environment';
                 currentVideoDeviceId = ultraWideDev.deviceId;

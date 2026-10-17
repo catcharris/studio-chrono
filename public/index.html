@@ -270,30 +270,29 @@
         }
         .tool-circle:active { transform: scale(0.92); }
 
-        /* 하단 컨트롤 독: 가로 스크롤이나 화면 삐져나감 없이 중앙에 딱 맞게 배치! */
+        /* 하단 컨트롤 독: 아이폰 12 미니(375px)에서도 6개 버튼이 절대 안 잘리고 100% 한 화면에 들어오는 탭바 구조! */
         #bottomDock {
-            position: absolute; bottom: max(14px, env(safe-area-inset-bottom));
-            left: 10px; right: 10px;
-            margin: 0 auto;
-            width: fit-content;
-            max-width: calc(100vw - 20px);
-            display: flex; align-items: center; justify-content: center; gap: 5px;
-            background: rgba(18, 18, 22, 0.92); border: 1px solid rgba(255,255,255,0.1);
-            padding: 6px 8px; border-radius: 18px; backdrop-filter: blur(16px);
+            position: absolute; bottom: max(12px, env(safe-area-inset-bottom));
+            left: 12px; right: 12px;
+            display: flex; align-items: stretch; justify-content: space-between; gap: 4px;
+            background: rgba(18, 18, 22, 0.94); border: 1px solid rgba(255,255,255,0.12);
+            padding: 6px; border-radius: 18px; backdrop-filter: blur(16px);
             z-index: 45;
         }
         .dock-btn {
+            flex: 1; min-width: 0;
             background: #1f1f26; border: 1px solid #2e2e38; color: #e4e4e7;
-            padding: 8px 9px; border-radius: 12px; font-size: 10px;
+            padding: 7px 2px; border-radius: 12px;
+            font-size: 9px; font-weight: 600; letter-spacing: 0.2px;
             font-family: 'JetBrains Mono', monospace; cursor: pointer;
-            display: flex; align-items: center; justify-content: center; gap: 4px;
-            white-space: nowrap; flex-shrink: 1;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+            white-space: nowrap; overflow: hidden;
         }
-        .dock-btn .material-symbols-rounded { font-size: 16px; }
+        .dock-btn .material-symbols-rounded { font-size: 18px; line-height: 1; }
         .dock-btn:active { transform: scale(0.95); }
-        .dock-btn.safe-muted { background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
+        .dock-btn.safe-muted { background: rgba(16, 185, 129, 0.14); border-color: rgba(16, 185, 129, 0.45); color: #34d399; }
         .dock-btn.live-warn { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.5); color: #f87171; }
-        .dock-btn.mic-off { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4); color: #fbbf24; }
+        .dock-btn.mic-off { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.45); color: #fbbf24; }
         .dock-btn.pip-active { background: rgba(59, 130, 246, 0.18); border-color: rgba(59, 130, 246, 0.5); color: #60a5fa; }
 
         /* 모달 공통 */
@@ -526,6 +525,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=43"></script>
+    <script src="script.js?v=44"></script>
 </body>
 </html>

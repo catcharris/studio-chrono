@@ -16,20 +16,25 @@ const peerRoles = {};   // socketId -> 'master' | 'monitor' | 'aux'
 const peerStreams = {}; // socketId -> MediaStream
 
 // 오디오/비디오 상태
-let isRemoteAudioMuted = true; // MASTER, AUX 입장 시 기본값 MUTE (연습실 소리 사고 100% 차단)
+let isRemoteAudioMuted = true; // MASTER, AUX 입장 시 기본값 MUTE
 let isLocalMicEnabled = true;
 let isMusicRawMode = true;
 let currentVideoDeviceId = null;
 let currentFacingMode = 'user';
 
+// Web Audio API (iOS Safari에서 muted=false 시 비디오가 멈추는 치명적 버그 우회용!)
+let audioCtx = null;
+let remoteGainNode = null;
+const connectedAudioSources = new Set();
+
 // 뷰어 채널 및 화면 모드
 let displayMode = 'stealth'; // 'stealth' | 'video' | 'blackout'
-let activeViewerChannel = 'master-front'; // 'master-front' | 'master-rear' | 'aux' | '360-sphere' | 'ext-360'
+let activeViewerChannel = 'master-front';
 let stealthPipVisible = false;
 let isSwappedPip = false;
 let currentExt360Url = '';
 
-// 비디오 회전 / 줌 / 터치 패닝(드래그 이동) 상태
+// 비디오 회전 / 줌 / 터치 패닝 상태
 let remoteRotation = 0;
 let remoteZoom = 1;
 let remoteMirrored = false;
@@ -58,7 +63,8 @@ const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' }
     ]
 };
 
@@ -68,6 +74,53 @@ const auxPipVideo = document.getElementById('auxPipVideo');
 const peekVideo = document.getElementById('peekVideo');
 const pipBox = document.getElementById('pipBox');
 const auxPipBox = document.getElementById('auxPipBox');
+
+// iOS Safari 자동재생 보장을 위해 모든 video 태그의 기본 muted 속성을 true로 강제 고정!
+// (실제 소리는 Web Audio API GainNode로 출력하여 비디오 멈춤 현상 100% 방지)
+remoteVideo.muted = true;
+localVideo.muted = true;
+auxPipVideo.muted = true;
+peekVideo.muted = true;
+
+function initWebAudio() {
+    try {
+        if (!audioCtx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContextClass();
+            remoteGainNode = audioCtx.createGain();
+            remoteGainNode.connect(audioCtx.destination);
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 1.8;
+    } catch (e) {
+        console.warn('WebAudio init error:', e);
+    }
+}
+
+document.addEventListener('touchstart', () => {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}, { passive: true });
+document.addEventListener('click', () => {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+});
+
+function attachStreamToWebAudio(stream, peerId) {
+    if (!audioCtx || !remoteGainNode) return;
+    if (connectedAudioSources.has(peerId)) return;
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length > 0) {
+        try {
+            const audioOnlyStream = new MediaStream([audioTracks[0]]);
+            const source = audioCtx.createMediaStreamSource(audioOnlyStream);
+            source.connect(remoteGainNode);
+            connectedAudioSources.add(peerId);
+        } catch (e) {
+            console.warn('Audio source connect error:', e);
+        }
+    }
+}
 
 // =====================================================
 // 1. 세션 시작 (MASTER / MONITOR / AUX)
@@ -80,52 +133,51 @@ window.startSession = async function(role) {
     myRole = role;
 
     if (myRole === 'master') {
-        isRemoteAudioMuted = true; // 지휘자 아이폰은 절대 소리가 나면 안 됨
+        isRemoteAudioMuted = true;
         isMusicRawMode = true;
         currentFacingMode = 'user';
         displayMode = 'stealth';
     } else if (myRole === 'aux') {
-        // 합창단/X5 보조 카메라는 후면(외장) 카메라 기본 + 스피커 음소거 + 스텔스 타이머
         isRemoteAudioMuted = true;
         isMusicRawMode = true;
         currentFacingMode = 'environment';
         displayMode = 'stealth';
     } else {
-        // MONITOR (뷰어)
         isRemoteAudioMuted = false;
         isMusicRawMode = false;
         currentFacingMode = 'user';
         displayMode = 'video';
     }
 
+    initWebAudio();
     document.getElementById('lobbyStatus').innerText = 'INITIALIZING SENSORS...';
 
     try {
         await acquireMediaStream(null, currentFacingMode);
-        await requestWakeLock();
-
-        document.getElementById('lobbyScreen').style.display = 'none';
-        document.getElementById('mainScreen').style.display = 'block';
-
-        applyRemoteAudioState();
-        updateMicUI();
-        updateMusicModeUI();
-        setDisplayMode(displayMode);
-        startTimers();
-        setupPeekHoldEvents();
-        setupVideoTouchPanAndPinch();
-
-        setSyncStatus('connecting', 'WAIT SYNC');
-        socket.emit('join-room', { roomId, role: myRole });
     } catch (err) {
-        console.error('Media init error:', err);
-        alert('카메라/마이크 접근 권한을 허용해주세요.');
-        document.getElementById('lobbyStatus').innerText = 'PERMISSION DENIED';
+        console.warn('Camera/Mic fallback warning:', err);
+        // 혹시 모니터 쪽에 카메라가 없거나 거부되어도 시청(수신)은 가능하도록 빈 스트림 허용!
     }
+
+    await requestWakeLock();
+
+    document.getElementById('lobbyScreen').style.display = 'none';
+    document.getElementById('mainScreen').style.display = 'block';
+
+    applyRemoteAudioState();
+    updateMicUI();
+    updateMusicModeUI();
+    setDisplayMode(displayMode);
+    startTimers();
+    setupPeekHoldEvents();
+    setupVideoTouchPanAndPinch();
+
+    setSyncStatus('connecting', 'WAIT SYNC');
+    socket.emit('join-room', { roomId, role: myRole });
 };
 
 // =====================================================
-// 2. 카메라 & 오디오 스트림 획득 (초광각 0.5x & X5 지원)
+// 2. 카메라 & 오디오 스트림 획득 (안전한 제약조건 폴백 적용)
 // =====================================================
 async function acquireMediaStream(deviceId = null, facingMode = 'user') {
     if (localStream) {
@@ -133,25 +185,34 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
     }
 
     const videoConstraints = {
-        width: { ideal: 1280, max: 1920 },
-        height: { ideal: 720, max: 1080 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
         frameRate: { ideal: 24, max: 30 }
     };
 
     if (deviceId) {
         videoConstraints.deviceId = { exact: deviceId };
     } else {
-        videoConstraints.facingMode = { ideal: facingMode };
+        videoConstraints.facingMode = facingMode;
     }
 
     const audioConstraints = isMusicRawMode
         ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
         : { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
-    localStream = await navigator.mediaDevices.getUserMedia({
-        video: videoConstraints,
-        audio: audioConstraints
-    });
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: videoConstraints,
+            audio: audioConstraints
+        });
+    } catch (err) {
+        console.warn('Primary getUserMedia failed, retrying with basic constraints:', err);
+        // iOS Safari 등에서 특정 해상도/제약조건 충돌 시 기본 설정으로 즉시 재시도
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: facingMode },
+            audio: true
+        });
+    }
 
     localStream.getAudioTracks().forEach(track => {
         track.enabled = isLocalMicEnabled;
@@ -159,7 +220,7 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
 
     const vTrack = localStream.getVideoTracks()[0];
     if (vTrack) {
-        const settings = vTrack.getSettings();
+        const settings = vTrack.getSettings ? vTrack.getSettings() : {};
         currentVideoDeviceId = settings.deviceId || deviceId;
         const isFront = (!deviceId && facingMode === 'user') || (vTrack.label && vTrack.label.toLowerCase().includes('front'));
         localVideo.style.transform = isFront ? 'scaleX(-1)' : 'scaleX(1)';
@@ -200,7 +261,7 @@ function getShortCamName(label, facing) {
 }
 
 // =====================================================
-// 3. 카메라 센서 선택 모달 (전면 / 후면 / 초광각 0.5x / X5)
+// 3. 카메라 센서 선택 모달
 // =====================================================
 window.openCamModal = async function() {
     const modal = document.getElementById('camModal');
@@ -211,7 +272,6 @@ window.openCamModal = async function() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
-        // 1) 전면(지휘자) 빠른 선택
         const quickFront = document.createElement('button');
         quickFront.className = 'cam-item' + (currentFacingMode === 'user' && !currentVideoDeviceId ? ' selected' : '');
         quickFront.innerHTML = `<span>Front Sensor (지휘자 정면)</span><span>FRONT</span>`;
@@ -223,7 +283,6 @@ window.openCamModal = async function() {
         };
         container.appendChild(quickFront);
 
-        // 2) 후면(합창단) 빠른 선택
         const quickRear = document.createElement('button');
         quickRear.className = 'cam-item' + (currentFacingMode === 'environment' && !currentVideoDeviceId ? ' selected' : '');
         quickRear.innerHTML = `<span>Rear Sensor (합창단 방향)</span><span>REAR</span>`;
@@ -235,7 +294,6 @@ window.openCamModal = async function() {
         };
         container.appendChild(quickRear);
 
-        // 3) 기기별 모든 렌즈 (아이폰 초광각 0.5x, 망원, 외장 X5 등)
         videoDevices.forEach((dev, idx) => {
             const btn = document.createElement('button');
             const isSel = dev.deviceId && dev.deviceId === currentVideoDeviceId;
@@ -261,12 +319,11 @@ window.closeCamModal = function() {
 };
 
 // =====================================================
-// 4. 뷰어(MONITOR) 멀티캠 채널 전환 & 360° VR 구체 뷰어
+// 4. 뷰어(MONITOR) 멀티캠 채널 전환 & 비디오 재생 보장
 // =====================================================
 window.selectViewerChannel = function(channel) {
     activeViewerChannel = channel;
 
-    // 버튼 활성화 표시
     ['chMasterFront', 'chMasterRear', 'chAuxCam', 'ch360Sphere', 'chExt360'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.remove('active');
@@ -276,7 +333,6 @@ window.selectViewerChannel = function(channel) {
         document.getElementById('chMasterFront').classList.add('active');
         stop360SphereViewer();
         hideExt360Embed();
-        // 지휘자 폰에 전면(지휘자 얼굴) 카메라 요청
         socket.emit('room-event', { roomId, type: 'set-master-cam', mode: 'front' });
         renderStreamsToVideoElements();
         showFloatingMsg('CAM 1: 지휘자 정면 뷰');
@@ -284,7 +340,6 @@ window.selectViewerChannel = function(channel) {
         document.getElementById('chMasterRear').classList.add('active');
         stop360SphereViewer();
         hideExt360Embed();
-        // 지휘자 폰에 후면 초광각(합창단 전체) 카메라 요청
         socket.emit('room-event', { roomId, type: 'set-master-cam', mode: 'rear-wide' });
         renderStreamsToVideoElements();
         showFloatingMsg('CAM 1-B: 합창단 뷰 전환');
@@ -321,15 +376,30 @@ function getAnyRemoteStream() {
     return ids.length > 0 ? peerStreams[ids[0]] : null;
 }
 
+// 비디오 요소에 스트림을 안전하게 할당하고 play()를 강제 호출하는 헬퍼
+function safeAssignStream(videoEl, stream) {
+    if (!videoEl) return;
+    if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream || null;
+    }
+    if (stream) {
+        videoEl.muted = true; // iOS Safari 비디오 프리즈 방지 필수!
+        const playPromise = videoEl.play();
+        if (playPromise !== undefined) {
+            playPromise.catch(e => console.warn('Video auto-play retry:', e));
+        }
+    }
+}
+
 function renderStreamsToVideoElements() {
     const masterStream = getStreamByRole('master');
     const auxStream = getStreamByRole('aux');
     const monitorStream = getStreamByRole('monitor');
+    const fallbackRemote = getAnyRemoteStream();
 
-    // 배지 상태 업데이트
     const badgeMaster = document.getElementById('badgeMaster');
     const badgeAux = document.getElementById('badgeAux');
-    if (badgeMaster) badgeMaster.classList.toggle('live', !!masterStream);
+    if (badgeMaster) badgeMaster.classList.toggle('live', !!(masterStream || fallbackRemote));
     if (badgeAux) badgeAux.classList.toggle('live', !!auxStream);
 
     if (displayMode === 'stealth') {
@@ -337,16 +407,16 @@ function renderStreamsToVideoElements() {
         return;
     }
 
-    // 지휘자(MASTER) 또는 AUX가 VIEW 모드를 볼 때: 상대방(MONITOR) 얼굴을 메인으로 표시
+    // 지휘자(MASTER) 또는 AUX가 VIEW 모드를 볼 때
     if (myRole !== 'monitor') {
-        const targetRemote = monitorStream || auxStream || masterStream;
+        const targetRemote = monitorStream || auxStream || masterStream || fallbackRemote;
         if (!isSwappedPip) {
-            remoteVideo.srcObject = targetRemote || localStream;
-            localVideo.srcObject = localStream;
+            safeAssignStream(remoteVideo, targetRemote || localStream);
+            safeAssignStream(localVideo, localStream);
             document.getElementById('pipLabel').innerText = 'MY CAM';
         } else {
-            remoteVideo.srcObject = localStream;
-            localVideo.srcObject = targetRemote;
+            safeAssignStream(remoteVideo, localStream);
+            safeAssignStream(localVideo, targetRemote);
             document.getElementById('pipLabel').innerText = 'REMOTE';
         }
         auxPipBox.classList.add('hidden-pip');
@@ -354,32 +424,30 @@ function renderStreamsToVideoElements() {
         return;
     }
 
-    // 뷰어(MONITOR) 화면 구성:
-    // 메인 화면에 선택한 채널(CAM 1 지휘자 vs CAM 2 합창단/X5) 표시 + 다른 카메라는 PIP로 동시 표시!
-    let mainTarget = masterStream || auxStream || getAnyRemoteStream();
+    // 뷰어(MONITOR) 화면 구성
+    let mainTarget = masterStream || auxStream || fallbackRemote;
     let secondaryTarget = null;
 
     if (activeViewerChannel === 'aux' && auxStream) {
         mainTarget = auxStream;
-        secondaryTarget = masterStream;
+        secondaryTarget = masterStream || fallbackRemote;
     } else {
-        mainTarget = masterStream || auxStream;
-        secondaryTarget = auxStream && mainTarget !== auxStream ? auxStream : null;
+        mainTarget = masterStream || fallbackRemote || auxStream;
+        secondaryTarget = (auxStream && mainTarget !== auxStream) ? auxStream : null;
     }
 
     if (!isSwappedPip) {
-        remoteVideo.srcObject = mainTarget || localStream;
-        localVideo.srcObject = localStream;
+        safeAssignStream(remoteVideo, mainTarget || localStream);
+        safeAssignStream(localVideo, localStream);
         document.getElementById('pipLabel').innerText = 'ME';
     } else {
-        remoteVideo.srcObject = localStream;
-        localVideo.srcObject = mainTarget;
+        safeAssignStream(remoteVideo, localStream);
+        safeAssignStream(localVideo, mainTarget);
         document.getElementById('pipLabel').innerText = 'STAGE';
     }
 
-    // 세컨드 카메라(CAM 2)가 동시에 접속해 있으면 우측에 두 번째 PIP 카드로 동시 노출!
     if (secondaryTarget) {
-        auxPipVideo.srcObject = secondaryTarget;
+        safeAssignStream(auxPipVideo, secondaryTarget);
         auxPipBox.classList.remove('hidden-pip');
         document.getElementById('auxPipLabel').innerText = (mainTarget === auxStream) ? 'CAM 1' : 'CAM 2';
     } else {
@@ -398,7 +466,7 @@ window.swapAuxToMain = function() {
 };
 
 // =====================================================
-// 5. WebGL 360° VR 인터랙티브 구체 뷰어 (Three.js)
+// 5. WebGL 360° VR 인터랙티브 구체 뷰어
 // =====================================================
 function start360SphereViewer() {
     const container = document.getElementById('vr360Container');
@@ -411,7 +479,7 @@ function start360SphereViewer() {
         vrCamera.target = new THREE.Vector3(0, 0, 0);
 
         const geometry = new THREE.SphereGeometry(500, 60, 40);
-        geometry.scale(-1, 1, 1); // 구체 안쪽에서 바라보도록 반전
+        geometry.scale(-1, 1, 1);
 
         vrVideoTexture = new THREE.VideoTexture(remoteVideo);
         vrVideoTexture.minFilter = THREE.LinearFilter;
@@ -568,7 +636,6 @@ function setupVideoTouchPanAndPinch() {
         initPinch = null;
     });
 
-    // PC 마우스 드래그 지원
     stage.addEventListener('mousedown', e => {
         if (!isTouchPanEnabled) return;
         isDragging = true;
@@ -627,7 +694,7 @@ function applyVideoTransform() {
 }
 
 // =====================================================
-// 7. 외부 X5 360도 라이브 링크 (YouTube 360 등) 연동
+// 7. 외부 X5 360도 라이브 링크 연동
 // =====================================================
 window.open360LinkModal = function() {
     document.getElementById('ext360Input').value = currentExt360Url;
@@ -659,7 +726,6 @@ window.clearExt360Url = function() {
 };
 
 function convertToEmbedUrl(url) {
-    // YouTube 단축 URL 또는 일반 라이브 URL을 임베드 URL로 자동 변환
     try {
         if (url.includes('youtu.be/')) {
             const id = url.split('youtu.be/')[1].split(/[?&]/)[0];
@@ -702,19 +768,27 @@ function hideExt360Embed() {
 }
 
 // =====================================================
-// 8. 절대 안전 오디오 제어 (상대 소리 Mute & 내 마이크 Mute)
+// 8. 절대 안전 오디오 제어 (Web Audio Gain + 트랙 제어)
 // =====================================================
 window.toggleRemoteAudio = function() {
     isRemoteAudioMuted = !isRemoteAudioMuted;
+    initWebAudio();
     applyRemoteAudioState();
 };
 
 function applyRemoteAudioState() {
-    remoteVideo.muted = isRemoteAudioMuted;
+    // video 태그는 항상 muted=true로 유지해야 iOS Safari에서 영상이 멈추지 않음!
+    remoteVideo.muted = true;
     localVideo.muted = true;
     auxPipVideo.muted = true;
     peekVideo.muted = true;
 
+    // Web Audio API 볼륨 제어
+    if (remoteGainNode) {
+        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 1.8;
+    }
+
+    // 원격 오디오 트랙 활성화/비활성화
     for (const id in peerStreams) {
         peerStreams[id].getAudioTracks().forEach(track => {
             track.enabled = !isRemoteAudioMuted;
@@ -819,7 +893,7 @@ function updateStealthPipState() {
     if (stealthPipVisible) {
         pipBox.classList.remove('hidden-pip');
         pipBox.classList.add('stealth-mini');
-        localVideo.srcObject = monitorStream || localStream;
+        safeAssignStream(localVideo, monitorStream || localStream);
         document.getElementById('pipLabel').innerText = monitorStream ? 'MON' : 'CAM';
     } else {
         pipBox.classList.add('hidden-pip');
@@ -833,7 +907,7 @@ function setupPeekHoldEvents() {
     const showPeek = (e) => {
         if (e.cancelable) e.preventDefault();
         const monitorStream = getStreamByRole('monitor') || getAnyRemoteStream();
-        peekVideo.srcObject = monitorStream || localStream;
+        safeAssignStream(peekVideo, monitorStream || localStream);
         peekOverlay.style.display = 'flex';
     };
     const hidePeek = () => {
@@ -863,7 +937,7 @@ window.swapMainAndPip = function() {
 };
 
 // =====================================================
-// 10. WebRTC 멀티피어 시그널링 & 원격 카메라 제어
+// 10. WebRTC 멀티피어 시그널링 (안정적인 연결 보장)
 // =====================================================
 socket.on('connect', () => {
     if (roomId) {
@@ -879,6 +953,7 @@ socket.on('existing-peers', async (data) => {
     }
     for (const peer of peerList) {
         peerRoles[peer.id] = peer.role;
+        // 새로 입장한 노드가 기존 노드들에게 Offer 전송
         await initiateCall(peer.id);
     }
 });
@@ -896,6 +971,7 @@ socket.on('user-disconnected', (data) => {
     }
     delete peerStreams[peerId];
     delete peerRoles[peerId];
+    connectedAudioSources.delete(peerId);
 
     if (Object.keys(peerStreams).length === 0) {
         setSyncStatus('connecting', 'STANDBY');
@@ -904,34 +980,51 @@ socket.on('user-disconnected', (data) => {
 });
 
 async function initiateCall(targetId) {
-    const pc = createPeerConnection(targetId);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('offer', {
-        target: targetId,
-        caller: socket.id,
-        sdp: pc.localDescription
-    });
+    try {
+        const pc = createPeerConnection(targetId);
+        const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+        });
+        await pc.setLocalDescription(offer);
+        socket.emit('offer', {
+            target: targetId,
+            caller: socket.id,
+            sdp: pc.localDescription,
+            role: myRole
+        });
+    } catch (e) {
+        console.error('initiateCall error:', e);
+    }
 }
 
 socket.on('offer', async (payload) => {
-    if (payload.role) peerRoles[payload.caller] = payload.role;
-    const pc = createPeerConnection(payload.caller);
-    await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit('answer', {
-        target: payload.caller,
-        caller: socket.id,
-        sdp: pc.localDescription
-    });
+    try {
+        if (payload.role) peerRoles[payload.caller] = payload.role;
+        const pc = createPeerConnection(payload.caller);
+        await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('answer', {
+            target: payload.caller,
+            caller: socket.id,
+            sdp: pc.localDescription,
+            role: myRole
+        });
+    } catch (e) {
+        console.error('Offer handling error:', e);
+    }
 });
 
 socket.on('answer', async (payload) => {
-    if (payload.role) peerRoles[payload.caller] = payload.role;
-    const pc = peers[payload.caller];
-    if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+    try {
+        if (payload.role) peerRoles[payload.caller] = payload.role;
+        const pc = peers[payload.caller];
+        if (pc) {
+            await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+        }
+    } catch (e) {
+        console.error('Answer handling error:', e);
     }
 });
 
@@ -958,6 +1051,10 @@ function createPeerConnection(targetId) {
         localStream.getTracks().forEach(track => {
             pc.addTrack(track, localStream);
         });
+    } else {
+        // 만약 로컬 카메라가 없는 기기(모니터 전용 PC 등)에서 접속했을 때도 수신이 가능하도록 Transceiver 추가
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
     }
 
     pc.onicecandidate = (event) => {
@@ -970,11 +1067,19 @@ function createPeerConnection(targetId) {
     };
 
     pc.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-            peerStreams[targetId] = event.streams[0];
-            setSyncStatus('online', 'SYNC LOCKED');
-            renderStreamsToVideoElements();
+        // Safari/iOS에서 event.streams[0]가 비어있는 경우를 대비해 직접 MediaStream 구성 지원
+        let stream = (event.streams && event.streams[0]) ? event.streams[0] : peerStreams[targetId];
+        if (!stream) {
+            stream = new MediaStream();
         }
+        if (event.track && !stream.getTracks().includes(event.track)) {
+            stream.addTrack(event.track);
+        }
+
+        peerStreams[targetId] = stream;
+        attachStreamToWebAudio(stream, targetId);
+        setSyncStatus('online', 'SYNC LOCKED');
+        renderStreamsToVideoElements();
     };
 
     pc.onconnectionstatechange = () => {
@@ -982,6 +1087,7 @@ function createPeerConnection(targetId) {
         if (state === 'connected') {
             setSyncStatus('online', 'SYNC LOCKED');
             optimizeSenderBitrate();
+            renderStreamsToVideoElements();
         } else if (state === 'disconnected' || state === 'failed') {
             setSyncStatus('connecting', 'RECONNECTING');
         }
@@ -1001,7 +1107,7 @@ async function optimizeSenderBitrate() {
                     if (!params.encodings || params.encodings.length === 0) {
                         params.encodings = [{}];
                     }
-                    params.encodings[0].maxBitrate = 1500 * 1000; // 1.5 Mbps
+                    params.encodings[0].maxBitrate = 1500 * 1000;
                     params.encodings[0].maxFramerate = 30;
                     await sender.setParameters(params);
                 } catch (e) {}
@@ -1016,7 +1122,7 @@ function setSyncStatus(state, text) {
 }
 
 // =====================================================
-// 11. 무음 메모 & 원격 렌즈 전환 (초광각 후면 자동 탐색 포함)
+// 11. 무음 메모 & 원격 렌즈 전환
 // =====================================================
 window.toggleNotePopup = function() {
     const popup = document.getElementById('notePopup');
@@ -1045,13 +1151,11 @@ socket.on('room-event', async (payload) => {
         syncExt360Button(payload.url);
         if (payload.url) showFloatingMsg('X5 360° 채널이 연결되었습니다');
     } else if (payload.type === 'set-master-cam' && myRole === 'master') {
-        // 뷰어가 [CAM 1 (지휘자)] vs [CAM 1-B (후면/합창단)] 클릭 시 자동 렌즈 전환!
         if (payload.mode === 'front') {
             currentFacingMode = 'user';
             currentVideoDeviceId = null;
             await acquireMediaStream(null, 'user');
         } else if (payload.mode === 'rear-wide') {
-            // 아이폰 후면 초광각(0.5x Ultra Wide) 렌즈가 있으면 우선 선택!
             const ultraWideId = await findUltraWideRearDeviceId();
             currentFacingMode = 'environment';
             currentVideoDeviceId = ultraWideId;

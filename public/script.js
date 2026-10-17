@@ -738,7 +738,12 @@ function updateMusicModeUI() {
 // =====================================================
 // 10. 스텔스 화면 모드 전환 (TIMER / VIEW / DIM)
 // =====================================================
+let previousDisplayMode = 'stealth';
+
 window.setDisplayMode = function(mode) {
+    if (mode !== 'blackout') {
+        previousDisplayMode = mode;
+    }
     displayMode = mode;
 
     const stealthDeck = document.getElementById('stealthDeck');
@@ -789,13 +794,11 @@ function setupPeekHoldEvents() {
     window.addEventListener('mouseup', hidePeek);
 }
 
-let lastBlackoutTap = 0;
-window.handleBlackoutTap = function() {
-    const now = Date.now();
-    if (now - lastBlackoutTap < 350) {
-        setDisplayMode(myRole === 'monitor' ? 'video' : 'stealth');
-    }
-    lastBlackoutTap = now;
+// 디머(DIM) 화면에서 아무 곳이나 한 번만 터치해도 즉시 직전 화면(TIMER 또는 VIEW)으로 복귀!
+window.handleBlackoutTap = function(e) {
+    if (e && e.cancelable) e.preventDefault();
+    if (e && e.stopPropagation) e.stopPropagation();
+    setDisplayMode(previousDisplayMode || (myRole === 'monitor' ? 'video' : 'stealth'));
 };
 
 window.swapMainAndPip = function() {

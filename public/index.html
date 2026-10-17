@@ -243,12 +243,17 @@
             font-size: 11px; color: #a1a1aa;
         }
 
-        /* 블랙아웃 오버레이 */
+        /* 블랙아웃 오버레이 (한 번 터치 시 즉시 복귀) */
         #blackoutOverlay {
             position: fixed; inset: 0; background: #000000;
-            z-index: 90; display: none; align-items: center; justify-content: center;
+            z-index: 95; display: none; align-items: center; justify-content: center;
+            flex-direction: column; gap: 10px; cursor: pointer;
         }
-        .blackout-dot { width: 4px; height: 4px; border-radius: 50%; background: #18181b; }
+        .blackout-dot { width: 6px; height: 6px; border-radius: 50%; background: #27272a; }
+        .blackout-hint {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: #27272a; letter-spacing: 2px;
+        }
 
         /* =========================================
            6. 모니터 우측 툴바 & 하단 컨트롤 독 (아이폰 12 미니 폭 안에 100% 쏙 들어오게 설계!)
@@ -441,9 +446,10 @@
             <div class="peek-caption">RELEASE TO RETURN TO TIMER</div>
         </div>
 
-        <!-- 완전 암전(Blackout) 오버레이 -->
-        <div id="blackoutOverlay" onclick="handleBlackoutTap()">
+        <!-- 완전 암전(Blackout) 오버레이 (화면 터치 시 즉시 복귀) -->
+        <div id="blackoutOverlay" onclick="handleBlackoutTap()" ontouchend="handleBlackoutTap(event)">
             <div class="blackout-dot"></div>
+            <div class="blackout-hint">TAP TO WAKE</div>
         </div>
 
         <!-- 모니터용 우측 컨트롤 툴바 -->
@@ -520,6 +526,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=40"></script>
+    <script src="script.js?v=41"></script>
 </body>
 </html>

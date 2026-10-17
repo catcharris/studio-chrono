@@ -560,7 +560,7 @@ function createPeerConnection(targetUserId) {
 }
 
 // =====================================================
-// 6. 카메라 센서 선택 모달 (마스터용)
+// 6. 카메라 센서 선택 모달 (중복 제거 & 핵심 렌즈만 깔끔하게 정리!)
 // =====================================================
 window.openCamModal = async function() {
     const modal = document.getElementById('camModal');
@@ -571,40 +571,72 @@ window.openCamModal = async function() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
-        const quickFront = document.createElement('button');
-        quickFront.className = 'cam-item' + (currentFacingMode === 'user' && !currentVideoDeviceId ? ' selected' : '');
-        quickFront.innerHTML = `<span>Front Sensor (지휘자 정면)</span><span>FRONT</span>`;
-        quickFront.onclick = async () => {
+        // 초광각(0.5x) 및 외장 카메라만 별도 추출 (iOS의 중복 듀얼/트리플/망원 가상 카메라 제거)
+        let ultraWideDev = null;
+        const externalDevs = [];
+
+        videoDevices.forEach(dev => {
+            const l = (dev.label || '').toLowerCase();
+            if (l.includes('ultra') || l.includes('초광각') || l.includes('0.5')) {
+                if (!ultraWideDev) ultraWideDev = dev;
+            } else if (l.includes('insta360') || l.includes('x5') || l.includes('usb') || l.includes('external') || l.includes('외장')) {
+                externalDevs.push(dev);
+            }
+        });
+
+        // 1) 전면 카메라 (지휘자 정면)
+        const isFrontSel = (currentFacingMode === 'user' && !currentVideoDeviceId);
+        const btnFront = document.createElement('button');
+        btnFront.className = 'cam-item' + (isFrontSel ? ' selected' : '');
+        btnFront.innerHTML = `<span>전면 카메라 (지휘자 정면)</span><span>${isFrontSel ? '● FRONT' : 'FRONT'}</span>`;
+        btnFront.onclick = async () => {
             currentFacingMode = 'user';
             currentVideoDeviceId = null;
             closeCamModal();
             await acquireMediaStream(null, 'user');
         };
-        container.appendChild(quickFront);
+        container.appendChild(btnFront);
 
-        const quickRear = document.createElement('button');
-        quickRear.className = 'cam-item' + (currentFacingMode === 'environment' && !currentVideoDeviceId ? ' selected' : '');
-        quickRear.innerHTML = `<span>Rear Sensor (합창단 방향)</span><span>REAR</span>`;
-        quickRear.onclick = async () => {
+        // 2) 후면 기본 카메라 (합창단 1x)
+        const isRearSel = (currentFacingMode === 'environment' && !currentVideoDeviceId);
+        const btnRear = document.createElement('button');
+        btnRear.className = 'cam-item' + (isRearSel ? ' selected' : '');
+        btnRear.innerHTML = `<span>후면 카메라 (합창단 1x)</span><span>${isRearSel ? '● REAR 1x' : 'REAR 1x'}</span>`;
+        btnRear.onclick = async () => {
             currentFacingMode = 'environment';
             currentVideoDeviceId = null;
             closeCamModal();
             await acquireMediaStream(null, 'environment');
         };
-        container.appendChild(quickRear);
+        container.appendChild(btnRear);
 
-        videoDevices.forEach((dev, idx) => {
-            const btn = document.createElement('button');
-            const isSel = dev.deviceId && dev.deviceId === currentVideoDeviceId;
-            btn.className = 'cam-item' + (isSel ? ' selected' : '');
-            const name = dev.label || `Sensor #${idx + 1}`;
-            btn.innerHTML = `<span>${name}</span><span>${isSel ? '●' : ''}</span>`;
-            btn.onclick = async () => {
+        // 3) 후면 초광각 카메라 (합창단 넓게 0.5x - 기기에서 지원할 때만 1개 표시)
+        if (ultraWideDev) {
+            const isUltraSel = (currentVideoDeviceId === ultraWideDev.deviceId);
+            const btnUltra = document.createElement('button');
+            btnUltra.className = 'cam-item' + (isUltraSel ? ' selected' : '');
+            btnUltra.innerHTML = `<span>후면 초광각 (합창단 전체 0.5x)</span><span>${isUltraSel ? '● WIDE 0.5x' : 'WIDE 0.5x'}</span>`;
+            btnUltra.onclick = async () => {
+                currentFacingMode = 'environment';
+                currentVideoDeviceId = ultraWideDev.deviceId;
+                closeCamModal();
+                await acquireMediaStream(ultraWideDev.deviceId, 'environment');
+            };
+            container.appendChild(btnUltra);
+        }
+
+        // 4) 외장 카메라 (연결된 경우에만 표시)
+        externalDevs.forEach((dev) => {
+            const isExtSel = (currentVideoDeviceId === dev.deviceId);
+            const btnExt = document.createElement('button');
+            btnExt.className = 'cam-item' + (isExtSel ? ' selected' : '');
+            btnExt.innerHTML = `<span>외장 카메라 (${dev.label})</span><span>${isExtSel ? '● EXT' : 'EXT'}</span>`;
+            btnExt.onclick = async () => {
                 currentVideoDeviceId = dev.deviceId;
                 closeCamModal();
                 await acquireMediaStream(dev.deviceId, null);
             };
-            container.appendChild(btn);
+            container.appendChild(btnExt);
         });
     } catch (e) {
         console.error('Device enumeration error:', e);

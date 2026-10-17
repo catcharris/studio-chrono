@@ -6,19 +6,11 @@ const socket = io({
 });
 
 // =====================================================
-// 0. iOS 사파리 페이지 전체 확대(Pinch/Double-tap Zoom) 100% 원천 차단!
+// 0. iOS 사파리 페이지 전체 확대(Pinch/Double-tap Zoom) 100% 원천 차단
 // =====================================================
-document.addEventListener('gesturestart', function(e) {
-    e.preventDefault();
-}, { passive: false });
-
-document.addEventListener('gesturechange', function(e) {
-    e.preventDefault();
-}, { passive: false });
-
-document.addEventListener('gestureend', function(e) {
-    e.preventDefault();
-}, { passive: false });
+document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
+document.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
+document.addEventListener('gestureend', e => e.preventDefault(), { passive: false });
 
 document.addEventListener('touchmove', function(e) {
     if (e.touches && e.touches.length > 1) {
@@ -37,12 +29,12 @@ document.addEventListener('touchend', function(e) {
 
 // 역할 및 방 상태
 let roomId = '';
-let myRole = 'master'; // 'master' (지휘자) | 'monitor' (뷰어) | 'aux' (합창단/X5 보조 카메라)
+let myRole = 'master'; // 'master' (지휘자) | 'monitor' (뷰어)
 let localStream = null;
 
 // 멀티 피어 및 스트림 관리
 const peers = {};       // socketId -> RTCPeerConnection
-const peerRoles = {};   // socketId -> 'master' | 'monitor' | 'aux'
+const peerRoles = {};   // socketId -> 'master' | 'monitor'
 const peerStreams = {}; // socketId -> MediaStream
 
 // 오디오/비디오 상태
@@ -59,25 +51,13 @@ let remoteGainNode = null;
 // 뷰어 채널 및 화면 모드
 let displayMode = 'stealth'; // 'stealth' | 'video' | 'blackout'
 let activeViewerChannel = 'master-front';
-let isPipVisible = false; // 마스터는 기본 PIP 숨김(OFF), 필요할 때만 켜서 확인!
+let isPipVisible = false;
 let isSwappedPip = false;
-let currentExt360Url = '';
 
 // 비디오 회전 / 배율 상태
 let remoteRotation = 0;
 let remoteZoom = 1;
 let remoteMirrored = false;
-
-// Three.js 360° VR Sphere 변수
-let vrScene = null;
-let vrCamera = null;
-let vrRenderer = null;
-let vrSphereMesh = null;
-let vrVideoTexture = null;
-let vrIsActive = false;
-let vrLon = 0;
-let vrLat = 0;
-let vrFov = 75;
 
 // 타이머 & WakeLock
 let chronoSeconds = 0;
@@ -109,10 +89,8 @@ const rtcConfig = {
 
 const remoteVideo = document.getElementById('remoteVideo');
 const localVideo = document.getElementById('localVideo');
-const auxPipVideo = document.getElementById('auxPipVideo');
 const peekVideo = document.getElementById('peekVideo');
 const pipBox = document.getElementById('pipBox');
-const auxPipBox = document.getElementById('auxPipBox');
 
 function initAudioBooster() {
     try {
@@ -125,7 +103,6 @@ function initAudioBooster() {
         if (remoteAudioCtx.state === 'suspended') {
             remoteAudioCtx.resume();
         }
-        // 과도한 증폭(2.0x)으로 인한 하울링 방지를 위해 정배율(1.0x) 적용
         remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 1.0;
     } catch (e) {
         console.warn('AudioContext init error:', e);
@@ -154,7 +131,7 @@ function connectStreamAudio(stream) {
 }
 
 // =====================================================
-// 1. 세션 시작 (MASTER / MONITOR / AUX 역할별 UI 완벽 분리!)
+// 1. 세션 시작 (MASTER vs MONITOR)
 // =====================================================
 window.startSession = async function(role) {
     initAudioBooster();
@@ -169,15 +146,9 @@ window.startSession = async function(role) {
         isMusicRawMode = true;
         currentFacingMode = 'user';
         displayMode = 'stealth';
-        isPipVisible = false;
-    } else if (myRole === 'aux') {
-        isRemoteAudioMuted = true;
-        isMusicRawMode = true;
-        currentFacingMode = 'environment';
-        displayMode = 'stealth';
-        isPipVisible = false;
+        isPipVisible = false; // 마스터는 필요할 때만 PIP 켜기
     } else {
-        // MONITOR (뷰어): 스피커가 켜져 있으므로 하울링 방지를 위해 무조건 에코캔슬링 ON(isMusicRawMode = false)
+        // MONITOR (뷰어)
         isRemoteAudioMuted = false;
         isMusicRawMode = false;
         currentFacingMode = 'user';
@@ -185,7 +156,7 @@ window.startSession = async function(role) {
         isPipVisible = true;
     }
 
-    document.getElementById('lobbyStatus').innerText = 'INITIALIZING SENSORS...';
+    document.getElementById('lobbyStatus').innerText = 'INITIALIZING...';
 
     try {
         await acquireMediaStream(null, currentFacingMode);
@@ -210,17 +181,18 @@ window.startSession = async function(role) {
     startTimers();
     setupPeekHoldEvents();
 
-    setSyncStatus('connecting', 'WAIT SYNC');
+    setSyncStatus('connecting', 'WAIT');
     socket.emit('join-room', { roomId, role: myRole });
 };
 
 function configureRoleSpecificUI() {
-    const isMasterOrAux = (myRole === 'master' || myRole === 'aux');
+    const isMaster = (myRole === 'master');
 
-    document.getElementById('masterModeSwitcher').style.display = isMasterOrAux ? 'flex' : 'none';
+    // 마스터에게만 상단 TIMER/VIEW/DIM 버튼 및 하단 CAM/RAW 버튼 표시
+    document.getElementById('masterModeSwitcher').style.display = isMaster ? 'flex' : 'none';
 
     document.querySelectorAll('.master-only').forEach(el => {
-        el.style.display = isMasterOrAux ? 'flex' : 'none';
+        el.style.display = isMaster ? 'flex' : 'none';
     });
 }
 
@@ -238,15 +210,15 @@ function updatePipButtonUI() {
     const label = document.getElementById('labelPip');
     if (isPipVisible) {
         btn.className = 'dock-btn pip-active';
-        label.innerText = 'PIP: ON';
+        label.innerText = 'PIP';
     } else {
         btn.className = 'dock-btn';
-        label.innerText = 'PIP: OFF';
+        label.innerText = 'PIP';
     }
 }
 
 // =====================================================
-// 3. 카메라 & 오디오 스트림 획득 (하울링 원천 차단 오디오 제약조건!)
+// 3. 카메라 & 오디오 스트림 획득
 // =====================================================
 async function acquireMediaStream(deviceId = null, facingMode = 'user') {
     if (localStream) {
@@ -257,7 +229,6 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
         ? { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } }
         : { facingMode: facingMode, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } };
 
-    // 스피커가 켜져 있을 때(isRemoteAudioMuted === false)는 하울링 방지를 위해 무조건 echoCancellation을 켬!
     const useEchoCancel = !isRemoteAudioMuted || !isMusicRawMode;
     const audioConstraints = {
         echoCancellation: useEchoCancel,
@@ -313,15 +284,14 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
 function getShortCamName(label, facing) {
     if (!label) return facing === 'environment' ? 'REAR' : 'FRONT';
     const lower = label.toLowerCase();
-    if (lower.includes('insta360') || lower.includes('x5') || lower.includes('usb')) return 'EXT (X5)';
-    if (lower.includes('ultra') || lower.includes('초광각') || lower.includes('0.5')) return '0.5x WIDE';
+    if (lower.includes('ultra') || lower.includes('초광각') || lower.includes('0.5')) return '0.5x';
     if (lower.includes('back') || lower.includes('후면')) return 'REAR';
     if (lower.includes('front') || lower.includes('전면')) return 'FRONT';
     return 'CAM';
 }
 
 // =====================================================
-// 4. 화면 배치 로직 (마스터 PIP 제어 & 모니터 깔끔한 뷰)
+// 4. 화면 배치 로직
 // =====================================================
 function getStreamByRole(targetRole) {
     for (const id in peerStreams) {
@@ -349,42 +319,32 @@ function assignVideoSrc(videoEl, stream) {
 
 function updateVideoLayout() {
     const masterStream = getStreamByRole('master');
-    const auxStream = getStreamByRole('aux');
     const monitorStream = getStreamByRole('monitor');
     const anyRemoteStream = getFirstRemoteStream();
 
     const badgeMaster = document.getElementById('badgeMaster');
-    const badgeAux = document.getElementById('badgeAux');
     if (badgeMaster) badgeMaster.classList.toggle('live', !!(masterStream || anyRemoteStream));
-    if (badgeAux) badgeAux.classList.toggle('live', !!auxStream);
 
-    // 1) 마스터 스텔스 타이머 모드일 때:
-    // PIP 버튼을 켰을 때만(isPipVisible === true) 원격 접속자(모니터) 화면을 작은 PIP로 띄움!
+    // 1) 마스터 스텔스 타이머 모드
     if (displayMode === 'stealth') {
-        auxPipBox.classList.add('hidden-pip');
         if (isPipVisible) {
             pipBox.classList.remove('hidden-pip');
             pipBox.classList.add('stealth-mini');
             const targetPip = monitorStream || anyRemoteStream || localStream;
             assignVideoSrc(localVideo, targetPip);
             localVideo.style.transform = (monitorStream || anyRemoteStream) ? 'scaleX(1)' : 'scaleX(-1)';
-            document.getElementById('pipLabel').innerText = (monitorStream || anyRemoteStream) ? 'MON' : 'MY CAM';
+            document.getElementById('pipLabel').innerText = (monitorStream || anyRemoteStream) ? 'MON' : 'CAM';
         } else {
             pipBox.classList.add('hidden-pip');
         }
         return;
     }
 
-    // 2) VIEW 모드일 때:
+    // 2) VIEW 모드
     pipBox.classList.remove('stealth-mini');
 
     if (myRole === 'monitor') {
-        // [모니터(뷰어) 화면]
-        let mainTarget = (activeViewerChannel === 'aux' && auxStream)
-            ? auxStream
-            : (masterStream || anyRemoteStream || auxStream || null);
-
-        let secondaryTarget = (auxStream && mainTarget !== auxStream) ? auxStream : null;
+        const mainTarget = masterStream || anyRemoteStream || null;
 
         if (!isSwappedPip) {
             assignVideoSrc(remoteVideo, mainTarget);
@@ -398,30 +358,19 @@ function updateVideoLayout() {
             document.getElementById('pipLabel').innerText = 'STAGE';
         }
 
-        // 모니터도 하단 PIP: ON/OFF 버튼으로 본인 PIP를 숨기거나 켤 수 있음
         if (isPipVisible) {
             pipBox.classList.remove('hidden-pip');
         } else {
             pipBox.classList.add('hidden-pip');
         }
-
-        if (secondaryTarget && isPipVisible) {
-            assignVideoSrc(auxPipVideo, secondaryTarget);
-            auxPipBox.classList.remove('hidden-pip');
-            document.getElementById('auxPipLabel').innerText = 'CAM 2';
-        } else {
-            auxPipBox.classList.add('hidden-pip');
-        }
     } else {
-        // [마스터(지휘자)가 VIEW 모드를 켰을 때]
-        // 큰 화면 = 원격 접속자(모니터) 화면 (또는 내 카메라), PIP는 PIP: ON일 때만 표시!
         const targetRemote = monitorStream || anyRemoteStream || null;
 
         if (!isSwappedPip) {
             assignVideoSrc(remoteVideo, targetRemote || localStream);
             assignVideoSrc(localVideo, localStream);
             localVideo.style.transform = 'scaleX(-1)';
-            document.getElementById('pipLabel').innerText = 'MY CAM';
+            document.getElementById('pipLabel').innerText = 'CAM';
         } else {
             assignVideoSrc(remoteVideo, localStream);
             assignVideoSrc(localVideo, targetRemote);
@@ -434,7 +383,6 @@ function updateVideoLayout() {
         } else {
             pipBox.classList.add('hidden-pip');
         }
-        auxPipBox.classList.add('hidden-pip');
     }
 
     applyRemoteAudioState();
@@ -448,7 +396,7 @@ socket.on('user-connected', async (peerInfo) => {
     const role = (typeof peerInfo === 'object' && peerInfo.role) ? peerInfo.role : 'monitor';
     peerRoles[userId] = role;
 
-    setSyncStatus('connecting', 'LINKING...');
+    setSyncStatus('connecting', 'LINK');
 
     const pc = createPeerConnection(userId);
     const offer = await pc.createOffer();
@@ -485,7 +433,7 @@ socket.on('answer', async (payload) => {
     const pc = peers[payload.caller];
     if (pc) {
         await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-        setSyncStatus('online', 'SYNC LOCKED');
+        setSyncStatus('online', 'SYNC');
     }
 });
 
@@ -510,7 +458,7 @@ socket.on('user-disconnected', (data) => {
     delete peerRoles[peerId];
 
     if (Object.keys(peerStreams).length === 0) {
-        setSyncStatus('connecting', 'STANDBY');
+        setSyncStatus('connecting', 'WAIT');
     }
     updateVideoLayout();
 });
@@ -537,13 +485,13 @@ function createPeerConnection(targetUserId) {
         peerStreams[targetUserId] = stream;
 
         connectStreamAudio(stream);
-        setSyncStatus('online', 'SYNC LOCKED');
+        setSyncStatus('online', 'SYNC');
         updateVideoLayout();
     };
 
     pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected') {
-            setSyncStatus('online', 'SYNC LOCKED');
+            setSyncStatus('online', 'SYNC');
             updateVideoLayout();
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
             delete peers[targetUserId];
@@ -562,7 +510,7 @@ function createPeerConnection(targetUserId) {
 }
 
 // =====================================================
-// 6. 카메라 센서 선택 모달 (중복 제거 & 핵심 렌즈만 깔끔하게 정리!)
+// 6. 카메라 센서 선택 모달 (깔끔한 3개 항목)
 // =====================================================
 window.openCamModal = async function() {
     const modal = document.getElementById('camModal');
@@ -573,7 +521,6 @@ window.openCamModal = async function() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
-        // 초광각(0.5x) 및 외장 카메라만 별도 추출 (iOS의 중복 듀얼/트리플/망원 가상 카메라 제거)
         let ultraWideDev = null;
         const externalDevs = [];
 
@@ -586,7 +533,6 @@ window.openCamModal = async function() {
             }
         });
 
-        // 1) 전면 카메라 (지휘자 정면)
         const isFrontSel = (currentFacingMode === 'user' && !currentVideoDeviceId);
         const btnFront = document.createElement('button');
         btnFront.className = 'cam-item' + (isFrontSel ? ' selected' : '');
@@ -599,7 +545,6 @@ window.openCamModal = async function() {
         };
         container.appendChild(btnFront);
 
-        // 2) 후면 기본 카메라 (합창단 1x)
         const isRearSel = (currentFacingMode === 'environment' && !currentVideoDeviceId);
         const btnRear = document.createElement('button');
         btnRear.className = 'cam-item' + (isRearSel ? ' selected' : '');
@@ -612,7 +557,6 @@ window.openCamModal = async function() {
         };
         container.appendChild(btnRear);
 
-        // 3) 후면 초광각 카메라 (합창단 넓게 0.5x - 기기에서 지원할 때만 1개 표시)
         if (ultraWideDev) {
             const isUltraSel = (currentVideoDeviceId === ultraWideDev.deviceId);
             const btnUltra = document.createElement('button');
@@ -627,7 +571,6 @@ window.openCamModal = async function() {
             container.appendChild(btnUltra);
         }
 
-        // 4) 외장 카메라 (연결된 경우에만 표시)
         externalDevs.forEach((dev) => {
             const isExtSel = (currentVideoDeviceId === dev.deviceId);
             const btnExt = document.createElement('button');
@@ -652,161 +595,31 @@ window.closeCamModal = function() {
 };
 
 // =====================================================
-// 7. 뷰어(MONITOR) 상단 멀티캠 채널 전환
+// 7. 뷰어(MONITOR) 상단 카메라 전환 (지휘자 / 합창단)
 // =====================================================
 window.selectViewerChannel = function(channel) {
     activeViewerChannel = channel;
 
-    ['chMasterFront', 'chMasterRear', 'chAuxCam', 'ch360Sphere', 'chExt360'].forEach(id => {
+    ['chMasterFront', 'chMasterRear'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.remove('active');
     });
 
     if (channel === 'master-front') {
         document.getElementById('chMasterFront').classList.add('active');
-        stop360SphereViewer();
-        hideExt360Embed();
         socket.emit('room-event', { roomId, type: 'set-master-cam', mode: 'front' });
         updateVideoLayout();
-        showFloatingMsg('CAM 1: 지휘자 정면 뷰');
+        showFloatingMsg('지휘자 (전면) 뷰');
     } else if (channel === 'master-rear') {
         document.getElementById('chMasterRear').classList.add('active');
-        stop360SphereViewer();
-        hideExt360Embed();
         socket.emit('room-event', { roomId, type: 'set-master-cam', mode: 'rear-wide' });
         updateVideoLayout();
-        showFloatingMsg('CAM 1-B: 합창단 뷰 전환');
-    } else if (channel === 'aux') {
-        document.getElementById('chAuxCam').classList.add('active');
-        stop360SphereViewer();
-        hideExt360Embed();
-        updateVideoLayout();
-        showFloatingMsg('CAM 2: 보조/X5 카메라 뷰');
-    } else if (channel === '360-sphere') {
-        document.getElementById('ch360Sphere').classList.add('active');
-        hideExt360Embed();
-        start360SphereViewer();
-        showFloatingMsg('360° VR 모드');
-    } else if (channel === 'ext-360') {
-        document.getElementById('chExt360').classList.add('active');
-        stop360SphereViewer();
-        showExt360Embed();
-        showFloatingMsg('X5 360° 라이브 스트림');
-    }
-};
-
-window.swapAuxToMain = function() {
-    if (activeViewerChannel === 'aux') {
-        selectViewerChannel('master-front');
-    } else {
-        selectViewerChannel('aux');
+        showFloatingMsg('합창단 (후면) 뷰');
     }
 };
 
 // =====================================================
-// 8. WebGL 360° VR 구체 뷰어
-// =====================================================
-function start360SphereViewer() {
-    const container = document.getElementById('vr360Container');
-    container.style.display = 'block';
-    vrIsActive = true;
-
-    if (!vrRenderer) {
-        vrScene = new THREE.Scene();
-        vrCamera = new THREE.PerspectiveCamera(vrFov, window.innerWidth / window.innerHeight, 1, 1100);
-        vrCamera.target = new THREE.Vector3(0, 0, 0);
-
-        const geometry = new THREE.SphereGeometry(500, 60, 40);
-        geometry.scale(-1, 1, 1);
-
-        vrVideoTexture = new THREE.VideoTexture(remoteVideo);
-        vrVideoTexture.minFilter = THREE.LinearFilter;
-        vrVideoTexture.magFilter = THREE.LinearFilter;
-
-        const material = new THREE.MeshBasicMaterial({ map: vrVideoTexture });
-        vrSphereMesh = new THREE.Mesh(geometry, material);
-        vrScene.add(vrSphereMesh);
-
-        vrRenderer = new THREE.WebGLRenderer({ antialias: true });
-        vrRenderer.setPixelRatio(window.devicePixelRatio);
-        vrRenderer.setSize(window.innerWidth, window.innerHeight);
-        container.appendChild(vrRenderer.domElement);
-
-        setup360TouchControls(container);
-        window.addEventListener('resize', () => {
-            if (!vrCamera || !vrRenderer) return;
-            vrCamera.aspect = window.innerWidth / window.innerHeight;
-            vrCamera.updateProjectionMatrix();
-            vrRenderer.setSize(window.innerWidth, window.innerHeight);
-        });
-    }
-
-    animate360Sphere();
-}
-
-function stop360SphereViewer() {
-    vrIsActive = false;
-    document.getElementById('vr360Container').style.display = 'none';
-}
-
-function animate360Sphere() {
-    if (!vrIsActive) return;
-    requestAnimationFrame(animate360Sphere);
-
-    vrLat = Math.max(-85, Math.min(85, vrLat));
-    const phi = THREE.MathUtils.degToRad(90 - vrLat);
-    const theta = THREE.MathUtils.degToRad(vrLon);
-
-    vrCamera.target.x = 500 * Math.sin(phi) * Math.cos(theta);
-    vrCamera.target.y = 500 * Math.cos(phi);
-    vrCamera.target.z = 500 * Math.sin(phi) * Math.sin(theta);
-    vrCamera.lookAt(vrCamera.target);
-
-    if (vrRenderer && vrScene && vrCamera) {
-        vrRenderer.render(vrScene, vrCamera);
-    }
-}
-
-function setup360TouchControls(container) {
-    let isDown = false;
-    let startX = 0, startY = 0;
-    let startLon = 0, startLat = 0;
-
-    const onDown = (x, y) => {
-        isDown = true;
-        startX = x;
-        startY = y;
-        startLon = vrLon;
-        startLat = vrLat;
-    };
-    const onMove = (x, y) => {
-        if (!isDown) return;
-        vrLon = (startX - x) * 0.25 + startLon;
-        vrLat = (y - startY) * 0.25 + startLat;
-    };
-    const onUp = () => { isDown = false; };
-
-    container.addEventListener('mousedown', e => onDown(e.clientX, e.clientY));
-    window.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
-    window.addEventListener('mouseup', onUp);
-
-    container.addEventListener('touchstart', e => {
-        if (e.touches.length === 1) {
-            onDown(e.touches[0].clientX, e.touches[0].clientY);
-        }
-    }, { passive: true });
-
-    container.addEventListener('touchmove', e => {
-        if (e.touches.length === 1 && isDown) {
-            onMove(e.touches[0].clientX, e.touches[0].clientY);
-        }
-    }, { passive: true });
-
-    container.addEventListener('touchend', onUp);
-}
-
-// =====================================================
-// 9. 깔끔한 비디오 회전 / 배율 / 반전
+// 8. 깔끔한 비디오 회전 / 배율 / 반전
 // =====================================================
 window.rotateRemoteVideo = function() {
     remoteRotation = (remoteRotation + 90) % 360;
@@ -833,88 +646,13 @@ function applyVideoTransform() {
 }
 
 // =====================================================
-// 10. 외부 X5 360도 라이브 링크 연동
-// =====================================================
-window.open360LinkModal = function() {
-    document.getElementById('ext360Input').value = currentExt360Url;
-    document.getElementById('link360Modal').style.display = 'flex';
-};
-
-window.close360LinkModal = function() {
-    document.getElementById('link360Modal').style.display = 'none';
-};
-
-window.applyExt360Url = function() {
-    const raw = document.getElementById('ext360Input').value.trim();
-    if (!raw) return;
-    const embedUrl = convertToEmbedUrl(raw);
-    currentExt360Url = embedUrl;
-    socket.emit('room-event', { roomId, type: 'ext-360-url', url: embedUrl });
-    syncExt360Button(embedUrl);
-    close360LinkModal();
-    showFloatingMsg('X5 360° 스트림 채널이 활성화되었습니다');
-};
-
-window.clearExt360Url = function() {
-    currentExt360Url = '';
-    document.getElementById('ext360Input').value = '';
-    socket.emit('room-event', { roomId, type: 'ext-360-url', url: '' });
-    syncExt360Button('');
-    hideExt360Embed();
-    close360LinkModal();
-};
-
-function convertToEmbedUrl(url) {
-    try {
-        if (url.includes('youtu.be/')) {
-            const id = url.split('youtu.be/')[1].split(/[?&]/)[0];
-            return `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1`;
-        }
-        if (url.includes('youtube.com/watch')) {
-            const u = new URL(url);
-            const id = u.searchParams.get('v');
-            if (id) return `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1`;
-        }
-        if (url.includes('youtube.com/live/')) {
-            const id = url.split('youtube.com/live/')[1].split(/[?&]/)[0];
-            return `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1`;
-        }
-    } catch (e) {}
-    return url;
-}
-
-function syncExt360Button(url) {
-    currentExt360Url = url || '';
-    const btn = document.getElementById('chExt360');
-    if (btn) {
-        btn.style.display = currentExt360Url ? 'flex' : 'none';
-    }
-}
-
-function showExt360Embed() {
-    if (!currentExt360Url) return;
-    const wrapper = document.getElementById('ext360Wrapper');
-    const iframe = document.getElementById('ext360Iframe');
-    if (iframe.src !== currentExt360Url) {
-        iframe.src = currentExt360Url;
-    }
-    wrapper.style.display = 'block';
-}
-
-function hideExt360Embed() {
-    const wrapper = document.getElementById('ext360Wrapper');
-    wrapper.style.display = 'none';
-}
-
-// =====================================================
-// 11. 절대 안전 오디오 제어 (이중 출력 하울링 제거 & 스마트 에코 캔슬링!)
+// 9. 절대 안전 오디오 제어 (컴팩트 텍스트 & 하울링 원천 차단)
 // =====================================================
 window.toggleRemoteAudio = async function() {
     isRemoteAudioMuted = !isRemoteAudioMuted;
     initAudioBooster();
     applyRemoteAudioState();
 
-    // 스피커를 켜면(SPK: ON) 내 마이크에 즉시 에코 캔슬링(하울링 방지) 적용!
     if (localStream) {
         const audioTrack = localStream.getAudioTracks()[0];
         if (audioTrack && audioTrack.applyConstraints) {
@@ -929,11 +667,8 @@ window.toggleRemoteAudio = async function() {
 };
 
 function applyRemoteAudioState() {
-    // 핵심: WebAudio 믹서(remoteGainNode)가 이미 소리를 출력하므로,
-    // remoteVideo 태그 자체는 항상 muted = true로 두어야 소리가 2번 겹쳐서 하울링 나는 것을 막음!
     remoteVideo.muted = true;
     localVideo.muted = true;
-    auxPipVideo.muted = true;
     peekVideo.muted = true;
 
     if (remoteGainNode) {
@@ -953,11 +688,11 @@ function applyRemoteAudioState() {
     if (isRemoteAudioMuted) {
         btn.className = 'dock-btn safe-muted';
         icon.innerText = 'volume_off';
-        label.innerText = 'SPK: MUTE';
+        label.innerText = 'MUTE';
     } else {
         btn.className = 'dock-btn live-warn';
         icon.innerText = 'volume_up';
-        label.innerText = 'SPK: ON';
+        label.innerText = 'SPK';
     }
 }
 
@@ -979,11 +714,11 @@ function updateMicUI() {
     if (isLocalMicEnabled) {
         btn.className = 'dock-btn';
         icon.innerText = 'mic';
-        label.innerText = 'MIC: ON';
+        label.innerText = 'MIC';
     } else {
         btn.className = 'dock-btn mic-off';
         icon.innerText = 'mic_off';
-        label.innerText = 'MIC: OFF';
+        label.innerText = 'OFF';
     }
 }
 
@@ -994,11 +729,14 @@ window.toggleMusicAudioMode = async function() {
 };
 
 function updateMusicModeUI() {
-    document.getElementById('labelMusicMode').innerText = isMusicRawMode ? 'RAW: ON' : 'RAW: OFF';
+    const btn = document.getElementById('btnMusicMode');
+    const label = document.getElementById('labelMusicMode');
+    label.innerText = isMusicRawMode ? 'RAW' : 'STD';
+    btn.className = isMusicRawMode ? 'dock-btn master-only pip-active' : 'dock-btn master-only';
 }
 
 // =====================================================
-// 12. 스텔스 화면 모드 전환 (TIMER / VIEW / DIM)
+// 10. 스텔스 화면 모드 전환 (TIMER / VIEW / DIM)
 // =====================================================
 window.setDisplayMode = function(mode) {
     displayMode = mode;
@@ -1021,7 +759,6 @@ window.setDisplayMode = function(mode) {
     } else if (mode === 'video') {
         stealthDeck.style.display = 'none';
         blackoutOverlay.style.display = 'none';
-        // 우측 회전/배율 툴바와 상단 채널 선택 바는 모니터(뷰어) 화면에서만 표시!
         viewerTools.style.display = (myRole === 'monitor') ? 'flex' : 'none';
         channelBar.style.display = (myRole === 'monitor') ? 'flex' : 'none';
         updateVideoLayout();
@@ -1072,7 +809,7 @@ function setSyncStatus(state, text) {
 }
 
 // =====================================================
-// 13. 무음 메모 & 원격 렌즈 전환
+// 11. 무음 메모 & 원격 렌즈 전환
 // =====================================================
 window.toggleNotePopup = function() {
     const popup = document.getElementById('notePopup');
@@ -1097,9 +834,6 @@ window.sendNote = function() {
 socket.on('room-event', async (payload) => {
     if (payload.type === 'note') {
         displayIncomingNote(payload.data);
-    } else if (payload.type === 'ext-360-url') {
-        syncExt360Button(payload.url);
-        if (payload.url) showFloatingMsg('X5 360° 채널이 연결되었습니다');
     } else if (payload.type === 'set-master-cam' && myRole === 'master') {
         if (payload.mode === 'front') {
             currentFacingMode = 'user';
@@ -1146,7 +880,7 @@ function showFloatingMsg(msg) {
 }
 
 // =====================================================
-// 14. 리허설 타이머 & WakeLock
+// 12. 리허설 타이머 & WakeLock
 // =====================================================
 function startTimers() {
     if (chronoInterval) clearInterval(chronoInterval);

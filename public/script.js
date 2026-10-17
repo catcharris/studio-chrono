@@ -125,7 +125,8 @@ function initAudioBooster() {
         if (remoteAudioCtx.state === 'suspended') {
             remoteAudioCtx.resume();
         }
-        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 2.0;
+        // 과도한 증폭(2.0x)으로 인한 하울링 방지를 위해 정배율(1.0x) 적용
+        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 1.0;
     } catch (e) {
         console.warn('AudioContext init error:', e);
     }
@@ -168,7 +169,7 @@ window.startSession = async function(role) {
         isMusicRawMode = true;
         currentFacingMode = 'user';
         displayMode = 'stealth';
-        isPipVisible = false; // 마스터는 처음에는 PIP가 안 보이게 시작 (필요할 때만 버튼으로 켬!)
+        isPipVisible = false;
     } else if (myRole === 'aux') {
         isRemoteAudioMuted = true;
         isMusicRawMode = true;
@@ -176,12 +177,12 @@ window.startSession = async function(role) {
         displayMode = 'stealth';
         isPipVisible = false;
     } else {
-        // MONITOR (뷰어)
+        // MONITOR (뷰어): 스피커가 켜져 있으므로 하울링 방지를 위해 무조건 에코캔슬링 ON(isMusicRawMode = false)
         isRemoteAudioMuted = false;
         isMusicRawMode = false;
         currentFacingMode = 'user';
         displayMode = 'video';
-        isPipVisible = true; // 모니터는 본인 얼굴 PIP 기본 표시 (원하면 PIP 버튼으로 끌 수 있음)
+        isPipVisible = true;
     }
 
     document.getElementById('lobbyStatus').innerText = 'INITIALIZING SENSORS...';
@@ -199,7 +200,6 @@ window.startSession = async function(role) {
     document.getElementById('lobbyScreen').style.display = 'none';
     document.getElementById('mainScreen').style.display = 'block';
 
-    // 역할별 전용 버튼 노출/숨김 처리 (모니터 화면에서 불필요한 마스터 버튼 완전 제거!)
     configureRoleSpecificUI();
 
     applyRemoteAudioState();
@@ -217,17 +217,15 @@ window.startSession = async function(role) {
 function configureRoleSpecificUI() {
     const isMasterOrAux = (myRole === 'master' || myRole === 'aux');
 
-    // 1) 상단 우측 TIMER / VIEW / DIM 스위처는 마스터에게만 표시 (모니터 화면에선 숨김!)
     document.getElementById('masterModeSwitcher').style.display = isMasterOrAux ? 'flex' : 'none';
 
-    // 2) 하단 독의 마스터 전용 버튼들(SENSOR, RAW, X5 360)은 모니터 화면에서 모두 숨김!
     document.querySelectorAll('.master-only').forEach(el => {
         el.style.display = isMasterOrAux ? 'flex' : 'none';
     });
 }
 
 // =====================================================
-// 2. PIP 화면 켜기 / 끄기 토글 (필요할 때만 띄우기)
+// 2. PIP 화면 켜기 / 끄기 토글
 // =====================================================
 window.togglePipVisibility = function() {
     isPipVisible = !isPipVisible;
@@ -248,7 +246,7 @@ function updatePipButtonUI() {
 }
 
 // =====================================================
-// 3. 카메라 & 오디오 스트림 획득
+// 3. 카메라 & 오디오 스트림 획득 (하울링 원천 차단 오디오 제약조건!)
 // =====================================================
 async function acquireMediaStream(deviceId = null, facingMode = 'user') {
     if (localStream) {
@@ -259,9 +257,13 @@ async function acquireMediaStream(deviceId = null, facingMode = 'user') {
         ? { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } }
         : { facingMode: facingMode, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } };
 
-    const audioConstraints = isMusicRawMode
-        ? { autoGainControl: false, noiseSuppression: false }
-        : { autoGainControl: true, noiseSuppression: true, echoCancellation: true };
+    // 스피커가 켜져 있을 때(isRemoteAudioMuted === false)는 하울링 방지를 위해 무조건 echoCancellation을 켬!
+    const useEchoCancel = !isRemoteAudioMuted || !isMusicRawMode;
+    const audioConstraints = {
+        echoCancellation: useEchoCancel,
+        noiseSuppression: !isMusicRawMode,
+        autoGainControl: !isMusicRawMode
+    };
 
     try {
         localStream = await navigator.mediaDevices.getUserMedia({
@@ -905,22 +907,37 @@ function hideExt360Embed() {
 }
 
 // =====================================================
-// 11. 절대 안전 오디오 제어
+// 11. 절대 안전 오디오 제어 (이중 출력 하울링 제거 & 스마트 에코 캔슬링!)
 // =====================================================
-window.toggleRemoteAudio = function() {
+window.toggleRemoteAudio = async function() {
     isRemoteAudioMuted = !isRemoteAudioMuted;
     initAudioBooster();
     applyRemoteAudioState();
+
+    // 스피커를 켜면(SPK: ON) 내 마이크에 즉시 에코 캔슬링(하울링 방지) 적용!
+    if (localStream) {
+        const audioTrack = localStream.getAudioTracks()[0];
+        if (audioTrack && audioTrack.applyConstraints) {
+            try {
+                await audioTrack.applyConstraints({
+                    echoCancellation: !isRemoteAudioMuted || !isMusicRawMode,
+                    noiseSuppression: !isRemoteAudioMuted || !isMusicRawMode
+                });
+            } catch (e) {}
+        }
+    }
 };
 
 function applyRemoteAudioState() {
-    remoteVideo.muted = isRemoteAudioMuted;
+    // 핵심: WebAudio 믹서(remoteGainNode)가 이미 소리를 출력하므로,
+    // remoteVideo 태그 자체는 항상 muted = true로 두어야 소리가 2번 겹쳐서 하울링 나는 것을 막음!
+    remoteVideo.muted = true;
     localVideo.muted = true;
     auxPipVideo.muted = true;
     peekVideo.muted = true;
 
     if (remoteGainNode) {
-        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 2.0;
+        remoteGainNode.gain.value = isRemoteAudioMuted ? 0 : 1.0;
     }
 
     for (const id in peerStreams) {

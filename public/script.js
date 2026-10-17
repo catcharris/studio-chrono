@@ -759,7 +759,8 @@ window.setDisplayMode = function(mode) {
     } else if (mode === 'video') {
         stealthDeck.style.display = 'none';
         blackoutOverlay.style.display = 'none';
-        viewerTools.style.display = (myRole === 'monitor') ? 'flex' : 'none';
+        // 우측 [회전 / 1x 줌 / 좌우반전] 툴바는 VIEW 모드일 때 마스터와 모니터 모두에게 항상 표시!
+        viewerTools.style.display = 'flex';
         channelBar.style.display = (myRole === 'monitor') ? 'flex' : 'none';
         updateVideoLayout();
     } else if (mode === 'blackout') {

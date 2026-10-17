@@ -354,9 +354,9 @@
 
     <!-- 1. 로비 화면 -->
     <div id="lobbyScreen">
-        <div class="app-badge">ACOUSTIC MULTI-SYNC v3.4</div>
+        <div class="app-badge">ACOUSTIC SYNC v3.7</div>
         <h1 class="app-title">STUDIO CHRONO</h1>
-        <p class="app-sub">Precision Rehearsal Timer & Multi-Angle Monitor</p>
+        <p class="app-sub">Precision Rehearsal Timer & Monitor</p>
 
         <div class="lobby-card">
             <div class="input-group">
@@ -366,17 +366,12 @@
 
             <button class="btn-primary" onclick="startSession('master')">
                 <span class="material-symbols-rounded">timer</span>
-                MASTER (CONDUCTOR CAM)
+                MASTER (CONDUCTOR)
             </button>
 
             <button class="btn-secondary" onclick="startSession('monitor')">
                 <span class="material-symbols-rounded">visibility</span>
-                MONITOR (MULTI-VIEWER)
-            </button>
-
-            <button class="btn-aux" onclick="startSession('aux')">
-                <span class="material-symbols-rounded">videocam</span>
-                AUX SENSOR (CHOIR / X5 CAM 2)
+                MONITOR (VIEWER)
             </button>
 
             <div id="lobbyStatus">READY FOR SESSION</div>
@@ -410,14 +405,10 @@
         <div id="channelBar">
             <button id="chMasterFront" class="ch-btn active" onclick="selectViewerChannel('master-front')">
                 <span class="ch-badge live" id="badgeMaster"></span>
-                <span>CAM 1 (지휘자)</span>
+                <span>지휘자 (전면)</span>
             </button>
             <button id="chMasterRear" class="ch-btn" onclick="selectViewerChannel('master-rear')">
-                <span>CAM 1-B (합창단)</span>
-            </button>
-            <button id="chAuxCam" class="ch-btn" onclick="selectViewerChannel('aux')">
-                <span class="ch-badge" id="badgeAux"></span>
-                <span>CAM 2 (X5/전체샷)</span>
+                <span>합창단 (후면)</span>
             </button>
             <button id="ch360Sphere" class="ch-btn" onclick="selectViewerChannel('360-sphere')">
                 <span>360° VR</span>

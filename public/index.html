@@ -15,7 +15,7 @@
             user-select: none;
             -webkit-user-select: none;
             -webkit-touch-callout: none;
-            touch-action: manipulation; /* iOS 더블탭 및 핀치로 인한 페이지 레이아웃 확대 원천 차단 */
+            touch-action: manipulation;
         }
         body, html {
             position: fixed;
@@ -30,7 +30,7 @@
         .material-symbols-rounded { font-size: 20px; vertical-align: middle; }
 
         /* =========================================
-           1. 로비 화면 (STUDIO CHRONO 유틸리티 위장)
+           1. 로비 화면
            ========================================= */
         #lobbyScreen {
             position: absolute; inset: 0;
@@ -62,7 +62,7 @@
         .input-group input {
             width: 100%; padding: 14px 16px; border-radius: 12px;
             background: #09090b; border: 1px solid #27272a; color: #fff;
-            font-family: 'JetBrains Mono', monospace; font-size: 16px; /* 16px 이상이어야 iOS 자동 줌 안 됨 */
+            font-family: 'JetBrains Mono', monospace; font-size: 16px;
             outline: none; user-select: text; -webkit-user-select: text;
         }
         .input-group input:focus { border-color: #52525b; }
@@ -90,7 +90,7 @@
         }
 
         /* =========================================
-           2. 메인 워크스페이스 (고정 레이아웃)
+           2. 메인 워크스페이스
            ========================================= */
         #mainScreen { position: fixed; inset: 0; display: none; background: #000; overflow: hidden; }
 
@@ -113,7 +113,8 @@
         .sync-dot.online { background: #10b981; box-shadow: 0 0 8px #10b981; }
         .sync-dot.connecting { background: #f59e0b; }
 
-        .mode-switcher { pointer-events: auto; display: flex; gap: 6px; }
+        /* 마스터 전용 상단 화면 모드 스위처 (모니터 화면에서는 숨김) */
+        #masterModeSwitcher { pointer-events: auto; display: none; gap: 6px; }
         .mini-btn {
             background: rgba(24, 24, 27, 0.85); border: 1px solid rgba(255,255,255,0.1);
             color: #d4d4d8; padding: 6px 10px; border-radius: 10px; font-size: 11px;
@@ -190,7 +191,7 @@
         }
 
         /* =========================================
-           5. 비디오 & 360도 VR 스테이지 (고정 컨테이너)
+           5. 비디오 & 360도 VR 스테이지
            ========================================= */
         #videoStage {
             position: absolute; inset: 0; display: flex;
@@ -201,7 +202,6 @@
             transition: transform 0.2s ease-out;
         }
 
-        /* WebGL 360 Sphere 캔버스 컨테이너 (360° VR 모드 전용) */
         #vr360Container {
             position: absolute; inset: 0; display: none; z-index: 14;
             background: #000; touch-action: none; cursor: grab;
@@ -214,7 +214,6 @@
             font-family: 'JetBrains Mono', monospace; font-size: 11px; pointer-events: none;
         }
 
-        /* 외부 X5 360 라이브 임베드 컨테이너 */
         #ext360Wrapper {
             position: absolute; inset: 0; display: none; z-index: 15; background: #000;
         }
@@ -234,9 +233,9 @@
             transition: all 0.25s ease;
         }
         .pip-card.stealth-mini {
-            width: 66px; height: 88px; opacity: 0.35; border-color: rgba(255,255,255,0.08);
+            width: 72px; height: 96px; opacity: 0.45; border-color: rgba(255,255,255,0.12);
         }
-        .pip-card.hidden-pip { display: none; }
+        .pip-card.hidden-pip { display: none !important; }
         .pip-card video { width: 100%; height: 100%; object-fit: cover; }
         .pip-label {
             position: absolute; bottom: 5px; left: 6px;
@@ -268,7 +267,7 @@
         .blackout-dot { width: 4px; height: 4px; border-radius: 50%; background: #18181b; }
 
         /* =========================================
-           6. 모니터 우측 툴바 & 하단 컨트롤 독 (깔끔하게 정리)
+           6. 모니터 우측 툴바 & 하단 컨트롤 독
            ========================================= */
         #viewerTools {
             position: absolute; top: max(105px, calc(env(safe-area-inset-top) + 95px)); right: 14px;
@@ -300,6 +299,7 @@
         .dock-btn.safe-muted { background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
         .dock-btn.live-warn { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.5); color: #f87171; }
         .dock-btn.mic-off { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4); color: #fbbf24; }
+        .dock-btn.pip-active { background: rgba(59, 130, 246, 0.18); border-color: rgba(59, 130, 246, 0.5); color: #60a5fa; }
 
         /* 모달 공통 */
         .modal-backdrop {
@@ -333,7 +333,7 @@
         }
         #noteInput {
             flex: 1; background: transparent; border: none; color: #fff;
-            font-size: 16px; /* iOS 키보드 올라올 때 화면 확대 방지용 16px 고정 */
+            font-size: 16px;
             outline: none; padding: 6px; user-select: text; -webkit-user-select: text;
         }
         .note-send-btn {
@@ -354,7 +354,7 @@
 
     <!-- 1. 로비 화면 -->
     <div id="lobbyScreen">
-        <div class="app-badge">ACOUSTIC MULTI-SYNC v3.3</div>
+        <div class="app-badge">ACOUSTIC MULTI-SYNC v3.4</div>
         <h1 class="app-title">STUDIO CHRONO</h1>
         <p class="app-sub">Precision Rehearsal Timer & Multi-Angle Monitor</p>
 
@@ -392,7 +392,8 @@
                 <span id="syncText">STANDBY</span>
             </div>
 
-            <div class="mode-switcher">
+            <!-- 마스터 전용 상단 화면 모드 전환 버튼 (모니터 접속 시 숨김!) -->
+            <div id="masterModeSwitcher">
                 <button id="btnStealthMode" class="mini-btn" onclick="setDisplayMode('stealth')">
                     <span class="material-symbols-rounded" style="font-size:15px;">schedule</span>TIMER
                 </button>
@@ -412,7 +413,7 @@
                 <span>CAM 1 (지휘자)</span>
             </button>
             <button id="chMasterRear" class="ch-btn" onclick="selectViewerChannel('master-rear')">
-                <span>CAM 1-B (후면/합창단)</span>
+                <span>CAM 1-B (합창단)</span>
             </button>
             <button id="chAuxCam" class="ch-btn" onclick="selectViewerChannel('aux')">
                 <span class="ch-badge" id="badgeAux"></span>
@@ -435,8 +436,6 @@
                 <div class="timer-controls">
                     <button class="timer-btn" onclick="toggleChrono()" id="chronoToggleBtn">PAUSE</button>
                     <button class="timer-btn" onclick="resetChrono()">RESET</button>
-                    <button class="timer-btn" onclick="toggleStealthPip()" id="pipToggleBtn">PIP: OFF</button>
-                    <button class="timer-btn" onclick="open360LinkModal()">X5 LINK</button>
                 </div>
                 <div id="stealthNoteBar">
                     MEMO: <span id="stealthNoteText">—</span>
@@ -445,12 +444,12 @@
             </div>
         </div>
 
-        <!-- 5. 메인 비디오 스테이지 (화면 흔들림 없이 고정) -->
+        <!-- 5. 메인 비디오 스테이지 -->
         <div id="videoStage">
             <video id="remoteVideo" autoplay playsinline></video>
         </div>
 
-        <!-- WebGL 360도 인터랙티브 구체 뷰어 (360° VR 탭 선택 시에만 활성화) -->
+        <!-- WebGL 360도 인터랙티브 구체 뷰어 -->
         <div id="vr360Container">
             <div class="vr-hint">360° VR 모드: 드래그하여 회전</div>
         </div>
@@ -460,13 +459,13 @@
             <iframe id="ext360Iframe" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; vr" allowfullscreen></iframe>
         </div>
 
-        <!-- PIP 컨테이너 -->
+        <!-- PIP 컨테이너 (마스터는 기본 숨김, 필요할 때만 PIP 버튼으로 켬) -->
         <div id="pipContainer">
             <div id="auxPipBox" class="pip-card hidden-pip" onclick="swapAuxToMain()">
                 <video id="auxPipVideo" autoplay playsinline muted></video>
                 <div class="pip-label" id="auxPipLabel">CAM 2</div>
             </div>
-            <div id="pipBox" class="pip-card" onclick="swapMainAndPip()">
+            <div id="pipBox" class="pip-card hidden-pip" onclick="swapMainAndPip()">
                 <video id="localVideo" autoplay playsinline muted></video>
                 <div class="pip-label" id="pipLabel">CAM</div>
             </div>
@@ -483,7 +482,7 @@
             <div class="blackout-dot"></div>
         </div>
 
-        <!-- 모니터용 우측 컨트롤 툴바 (손바닥 버튼 제거! 깔끔하게 회전/배율/반전만 제공) -->
+        <!-- 모니터용 우측 컨트롤 툴바 -->
         <div id="viewerTools">
             <button class="tool-circle" onclick="rotateRemoteVideo()" title="90도 회전">
                 <span class="material-symbols-rounded">rotate_right</span>
@@ -505,33 +504,43 @@
             <button class="note-send-btn" onclick="sendNote()">SEND</button>
         </div>
 
-        <!-- 6. 하단 컨트롤 독 -->
+        <!-- 6. 하단 컨트롤 독 (역할별로 필요한 버튼만 표시!) -->
         <div id="bottomDock">
+            <!-- 공통: 스피커 켜기/끄기 -->
             <button id="btnSpeaker" class="dock-btn safe-muted" onclick="toggleRemoteAudio()">
                 <span class="material-symbols-rounded" id="iconSpeaker">volume_off</span>
                 <span id="labelSpeaker">SPK: MUTE</span>
             </button>
 
+            <!-- 공통: 내 마이크 켜기/끄기 -->
             <button id="btnMic" class="dock-btn" onclick="toggleLocalMic()">
                 <span class="material-symbols-rounded" id="iconMic">mic</span>
                 <span id="labelMic">MIC: ON</span>
             </button>
 
-            <button id="btnCam" class="dock-btn" onclick="openCamModal()">
+            <!-- PIP 켜기/끄기 버튼 (마스터는 원격접속자 PIP를 필요할 때만 띄움 / 모니터도 본인 PIP 숨기기 가능) -->
+            <button id="btnPipToggle" class="dock-btn" onclick="togglePipVisibility()">
+                <span class="material-symbols-rounded" id="iconPip">picture_in_picture_alt</span>
+                <span id="labelPip">PIP: OFF</span>
+            </button>
+
+            <!-- 마스터 전용 버튼들 (모니터 화면에서는 자동 숨김!) -->
+            <button id="btnCam" class="dock-btn master-only" onclick="openCamModal()">
                 <span class="material-symbols-rounded">videocam</span>
                 <span id="labelCam">SENSOR</span>
             </button>
 
-            <button id="btnMusicMode" class="dock-btn" onclick="toggleMusicAudioMode()">
+            <button id="btnMusicMode" class="dock-btn master-only" onclick="toggleMusicAudioMode()">
                 <span class="material-symbols-rounded">graphic_eq</span>
                 <span id="labelMusicMode">RAW: ON</span>
             </button>
 
-            <button class="dock-btn" onclick="open360LinkModal()">
+            <button id="btnX5Link" class="dock-btn master-only" onclick="open360LinkModal()">
                 <span class="material-symbols-rounded">360</span>
                 <span>X5 360</span>
             </button>
 
+            <!-- 공통: 메모 보내기 -->
             <button class="dock-btn" onclick="toggleNotePopup()">
                 <span class="material-symbols-rounded">edit_note</span>
                 <span>MEMO</span>
@@ -572,6 +581,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=33"></script>
+    <script src="script.js?v=34"></script>
 </body>
 </html>

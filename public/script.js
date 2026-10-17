@@ -864,20 +864,30 @@ async function findUltraWideRearDeviceId() {
 }
 
 function displayIncomingNote(msg) {
+    const noteBar = document.getElementById('stealthNoteBar');
     const noteText = document.getElementById('stealthNoteText');
     if (noteText) noteText.innerText = msg;
-    showFloatingMsg(msg);
+
+    if (noteBar) {
+        noteBar.classList.add('new-msg');
+        setTimeout(() => noteBar.classList.remove('new-msg'), 6000);
+    }
+
+    // 상단 플로팅 배너에도 10초 동안 선명하게 표시 (클릭하면 즉시 닫힘)
+    showFloatingMsg('💬 ' + msg, 10000);
 }
 
 let floatingTimer = null;
-function showFloatingMsg(msg) {
+function showFloatingMsg(msg, duration = 4000) {
     const el = document.getElementById('floatingMsg');
+    if (!el) return;
     el.innerText = msg;
     el.style.display = 'block';
+    el.onclick = () => { el.style.display = 'none'; };
     clearTimeout(floatingTimer);
     floatingTimer = setTimeout(() => {
         el.style.display = 'none';
-    }, 4000);
+    }, duration);
 }
 
 // =====================================================

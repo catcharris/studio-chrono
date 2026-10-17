@@ -8,7 +8,7 @@ const io = require('socket.io')(http, {
 
 app.use(express.static('public'));
 
-const rooms = {}; // roomId -> { peers: { socketId: { role } }, ext360Url: '' }
+const rooms = {}; // roomId -> { peers: { socketId: { role } } }
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
@@ -22,19 +22,13 @@ io.on('connection', (socket) => {
         socket.role = role;
 
         if (!rooms[roomId]) {
-            rooms[roomId] = { peers: {}, ext360Url: '' };
+            rooms[roomId] = { peers: {} };
         }
         rooms[roomId].peers[socket.id] = { role };
 
         console.log(`User ${socket.id} (${role}) joined room ${roomId}`);
 
-        // 기존 영화관 앱과 동일하게 방의 기존 유저들에게 user-connected 이벤트를 쏴서 즉시 Offer를 생성하게 함!
         socket.to(roomId).emit('user-connected', { id: socket.id, role });
-
-        // 현재 방의 360 링크 정보가 있으면 전달
-        if (rooms[roomId].ext360Url) {
-            socket.emit('room-event', { type: 'ext-360-url', url: rooms[roomId].ext360Url });
-        }
     });
 
     socket.on('offer', (payload) => {
@@ -58,13 +52,13 @@ io.on('connection', (socket) => {
         });
     });
 
+    // 메시지 및 카메라 전환 이벤트 릴레이 (방 전체에 확실하게 전달!)
     socket.on('room-event', (payload) => {
         const rId = payload.roomId || socket.roomId;
         if (!rId) return;
 
-        if (payload.type === 'ext-360-url' && rooms[rId]) {
-            rooms[rId].ext360Url = payload.url || '';
-        }
+        // 혹시 소켓이 재연결되었을 경우를 대비해 방에 다시 join 보장
+        socket.join(rId);
 
         socket.to(rId).emit('room-event', {
             ...payload,
